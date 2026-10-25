@@ -1,0 +1,26 @@
+{
+  "status": "passed",
+  "counts": {
+    "source_dev": 500,
+    "source_train": 4000,
+    "source_test": 500
+  },
+  "empty_images": {
+    "source_dev": 3,
+    "source_train": 28,
+    "source_test": 2
+  },
+  "checks": [
+    "conservation",
+    "purpose_disjointness",
+    "group_isolation",
+    "deterministic_recomputation",
+    "metadata_and_all_image_label_hashes",
+    "category_mapping",
+    "normalized_bbox_roundtrip",
+    "empty_labels_retained",
+    "final_test_excluded_from_training",
+    "selection_label_isolation"
+  ],
+  "final_test_executed": false
+}

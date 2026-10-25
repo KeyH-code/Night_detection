@@ -1,0 +1,45 @@
+{
+  "verified_at_utc": "2026-10-25T12:03:25.033815+00:00",
+  "archive_files_verified": 10002,
+  "all_extracted_hashes_match_archive": true,
+  "annotation_hashes_unchanged": true,
+  "category_mapping_matches_both_annotations": true,
+  "normalized_boxes_verified": 78239,
+  "clipped_boxes_verified": 933,
+  "normalization_preserves_image_metadata_and_all_annotation_ids": true,
+  "formal_split_created": true,
+  "final_test_frozen": true,
+  "frozen_versions": {
+    "source_v1": {
+      "ready_sha256": "72e75ebd99014c830e0227061e390e6aed768ae724b532a5c2c90fd8dec93e85",
+      "counts": {
+        "source_dev": 500,
+        "source_test": 500,
+        "source_train": 4000
+      }
+    },
+    "night_v1": {
+      "ready_sha256": "fc9e71fdfd7384e54ce33811844fef7f6e364a44c2d5c97230acfad199fabd5d",
+      "counts": {
+        "daytime_cross_scene_test": 3344,
+        "night_dev": 331,
+        "night_pool": 994,
+        "night_test": 331
+      }
+    }
+  },
+  "scripts_sha256": {
+    "audit_soda10m.py": "6388823375b0d3b86a6164256066ffc44703a018fbe0ea9892d09eb2599789d9",
+    "inspect_source_training.py": "1b522dfb43ecae7cc6f5f74ac70089137ee4e110c8fa625fbd263b45539ed484",
+    "make_splits.py": "58e8a2872c55dbac225dc9c9fd37b3b51572fea00307ee46e74ec81603885815",
+    "prepare_soda10m.py": "7592582cfe8e3e15ef71461168e9f747dcf26f967e72477e5ed1031612630ba3",
+    "review_soda10m.py": "90a9928464d57f453a6b44fe0c75fb816b15f4b7e6dd100103e480115c061c82",
+    "screen_similar_scenes.py": "d45c885ee309d601bee5c8b4c4a1d8e733fc385f1632dbe3a123ce07007c7e0c",
+    "serve_data_review.py": "2e4964a6fabf36ee33a5b40e2769d2fe6a938f0fb2f73c131840303fb041bd2e",
+    "source_contract.py": "329f1761dceab98552645d92eb12ea75469b658c974f84b4a06aeee6493b55a3",
+    "source_trainer.py": "da9a5b0b0f9c1b2afb98fc8ba9aabfe752e442af0f91dbc78fff904f53be9c81",
+    "train_source.py": "7b88e14ea5caf33ada7b30b9ea1f091e4ed96632018c3515c263300048203333",
+    "verify_official_source.py": "5183adae8ec8fbad6d8fbb666c44cb84fc4fe744cbfa951c10c4cb014fb06478",
+    "verify_soda10m.py": "114f0687ed22f18ac6773259b3c0795f6a59f41c6b3d4a095bb8e40b18411e8f"
+  }
+}

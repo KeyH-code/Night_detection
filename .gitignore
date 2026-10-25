@@ -1,0 +1,23 @@
+# Private datasets, image-level manifests, annotations and local audit previews.
+/data/
+/artifacts/
+/runs/
+/models/
+/weights/
+/logs/
+/exports/
+/.venv*/
+/.cache/
+__pycache__/
+*.py[cod]
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tar
+*.tar.gz
+*.zip
+*.part
+.env
+.env.*
+!.env.example

@@ -1,0 +1,36 @@
+{
+  "formal_split_created": true,
+  "final_test_frozen": true,
+  "frozen_versions": {
+    "source_v1": {
+      "ready_sha256": "72e75ebd99014c830e0227061e390e6aed768ae724b532a5c2c90fd8dec93e85",
+      "counts": {
+        "source_dev": 500,
+        "source_test": 500,
+        "source_train": 4000
+      }
+    },
+    "night_v1": {
+      "ready_sha256": "fc9e71fdfd7384e54ce33811844fef7f6e364a44c2d5c97230acfad199fabd5d",
+      "counts": {
+        "daytime_cross_scene_test": 3344,
+        "night_dev": 331,
+        "night_pool": 994,
+        "night_test": 331
+      }
+    }
+  },
+  "final_test_executed": false,
+  "source_ready_sha256": "72e75ebd99014c830e0227061e390e6aed768ae724b532a5c2c90fd8dec93e85",
+  "night_ready_sha256": "fc9e71fdfd7384e54ce33811844fef7f6e364a44c2d5c97230acfad199fabd5d",
+  "source_readonly_validation": "passed",
+  "night_readonly_validation": "passed",
+  "unit_tests_data_split": 10,
+  "unit_tests_data_preparation": 9,
+  "limitations": [
+    "custom scene-risk groups, not verified acquisition sequences",
+    "selection runtime path enforcement is a later task",
+    "training status is separately reported in reports/source_a.md"
+  ],
+  "night_selection_manifest_sha256": "04e000c0fb125c2eb7518658a94bbfeaba24cb2885347029af17d637fd7bd4e0"
+}

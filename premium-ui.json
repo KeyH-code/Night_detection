@@ -1,0 +1,17 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["review_app"],
+  "locale": "zh-CN",
+  "canonicalMap": "UX-CONTRACT.md",
+  "requiredCapabilities": ["Select/Listbox", "Form", "Scrollbar", "Toast"],
+  "ownership": {"Select/Listbox": "native"},
+  "requiredCommands": ["unit", "syntax"],
+  "commands": {
+    "unit": ".venv-data/Scripts/python.exe -m unittest discover -s tests -v",
+    "syntax": "node --check review_app/app.js"
+  },
+  "evidence": {
+    "failurePaths": "tests/test_review_app.py",
+    "browser": "reports/review_app_verification.md"
+  }
+}

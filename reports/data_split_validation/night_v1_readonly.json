@@ -1,0 +1,28 @@
+{
+  "status": "passed",
+  "counts": {
+    "daytime_cross_scene_test": 3344,
+    "night_dev": 331,
+    "night_pool": 994,
+    "night_test": 331
+  },
+  "empty_images": {
+    "daytime_cross_scene_test": 6,
+    "night_dev": 2,
+    "night_pool": 9,
+    "night_test": 1
+  },
+  "checks": [
+    "conservation",
+    "purpose_disjointness",
+    "group_isolation",
+    "deterministic_recomputation",
+    "metadata_and_all_image_label_hashes",
+    "category_mapping",
+    "normalized_bbox_roundtrip",
+    "empty_labels_retained",
+    "final_test_excluded_from_training",
+    "selection_label_isolation"
+  ],
+  "final_test_executed": false
+}

@@ -1,0 +1,125 @@
+{
+  "checked_at_utc": "2026-10-25T05:06:16.685503+00:00",
+  "official_download_page": "https://soda-2d.github.io/download.html",
+  "official_trainval_link": "https://drive.google.com/file/d/1oSJ0rbqNHLmlOOzpmQqXLDraCCQss4Q4/view?usp=sharing",
+  "file_id_matches_original_acquisition": true,
+  "remote_http_status": 206,
+  "fresh_remote_prefix_bytes": 10161205,
+  "fresh_remote_annotations_match_raw": true,
+  "fresh_remote_image_samples": [
+    {
+      "member": "SSLAD-2D/labeled/train/HT_TRAIN_003775_SH_000.jpg",
+      "bytes": 285897,
+      "remote_sha256": "a80474f68622ab8ce9b62ed6053046529f49fa13f5080bfc83121873b8ce70b9",
+      "local_match": true
+    },
+    {
+      "member": "SSLAD-2D/labeled/train/HT_TRAIN_001300_SH_000.jpg",
+      "bytes": 285710,
+      "remote_sha256": "5566f6235d3f4b95ae7925c5119c32963b0463a7872da681b7a2a651fe72c82b",
+      "local_match": true
+    },
+    {
+      "member": "SSLAD-2D/labeled/val/HT_VAL_000395_SZ_210.jpg",
+      "bytes": 530104,
+      "remote_sha256": "00d3bf75d9b2560f7acca9f2589e347b22217527a1e6eed891f8352a55b697fd",
+      "local_match": true
+    },
+    {
+      "member": "SSLAD-2D/labeled/val/HT_VAL_004395_GZ_231.jpg",
+      "bytes": 286794,
+      "remote_sha256": "47218d6ca8cb5774893818d952092eca979614e14d19af5cedc00f18fb5e709d",
+      "local_match": true
+    },
+    {
+      "member": "SSLAD-2D/labeled/val/HT_VAL_003537_SH_212.jpg",
+      "bytes": 423273,
+      "remote_sha256": "d0436793dd684c3a6009c9ba90eb2ca8ea9fa0aaf508ce62697c2df2aad4b416",
+      "local_match": true
+    },
+    {
+      "member": "SSLAD-2D/labeled/val/HT_VAL_000742_SH_212.jpg",
+      "bytes": 398795,
+      "remote_sha256": "d5d2d70f44726eaa785bf2e491848e87891e0314043a501a2a7069763c3d3eda",
+      "local_match": true
+    },
+    {
+      "member": "SSLAD-2D/labeled/val/HT_VAL_003746_GZ_231.jpg",
+      "bytes": 313102,
+      "remote_sha256": "0ba7d48b503a589ca4b7fef0d2e927dccd1589ec59d5d9636be1dac653d94122",
+      "local_match": true
+    },
+    {
+      "member": "SSLAD-2D/labeled/val/HT_VAL_000075_SH_211.jpg",
+      "bytes": 353942,
+      "remote_sha256": "2195b9118b956e4d4699b63d93dc9026ab8ebcfdc2dafc6c14f6df7f8c1e069f",
+      "local_match": true
+    }
+  ],
+  "local_archive_sha256": "18a73d48ce0883bb46e76c5b7cb5a4a89a993f70a31f15c8b90e557f3b3b19a4",
+  "archive_members": 10007,
+  "archive_file_count": 10002,
+  "non_image_files": [
+    "SSLAD-2D/labeled/annotations/instance_val.json",
+    "SSLAD-2D/labeled/annotations/instance_train.json"
+  ],
+  "physical_night_folder_exists": false,
+  "night_definition_used_by_audit": "official raw instance_val.json images[].period == 'Night'",
+  "boundary": "Official train/val retained; no custom split or night-directory copying performed. Test deliberately excluded, not a missing trainval part.",
+  "signature_limit": "Fresh HTTPS byte comparison and local hashes; no independent publisher signature available.",
+  "comparisons": [
+    {
+      "official_split": "val",
+      "member": "SSLAD-2D/labeled/annotations/instance_val.json",
+      "remote_sha256": "b6553208c7b742f0bd841df7e223224e6ee4f7801aa432e1dd1dbe3a580dd4c6",
+      "local_sha256": "b6553208c7b742f0bd841df7e223224e6ee4f7801aa432e1dd1dbe3a580dd4c6",
+      "byte_identical": true,
+      "images": 5000,
+      "boxes": 37129,
+      "filename_split_markers": [
+        "VAL"
+      ],
+      "files_match_exactly": true,
+      "period_counts": {
+        "Daytime": 3344,
+        "Night": 1656
+      },
+      "image_fields": [
+        "city",
+        "file_name",
+        "height",
+        "id",
+        "location",
+        "period",
+        "weather",
+        "width"
+      ]
+    },
+    {
+      "official_split": "train",
+      "member": "SSLAD-2D/labeled/annotations/instance_train.json",
+      "remote_sha256": "466795449573f3e5f290522c9b0c3de78cd523be1f6ea3331044e6f26eb16be2",
+      "local_sha256": "466795449573f3e5f290522c9b0c3de78cd523be1f6ea3331044e6f26eb16be2",
+      "byte_identical": true,
+      "images": 5000,
+      "boxes": 41110,
+      "filename_split_markers": [
+        "TRAIN"
+      ],
+      "files_match_exactly": true,
+      "period_counts": {
+        "Daytime": 5000
+      },
+      "image_fields": [
+        "city",
+        "file_name",
+        "height",
+        "id",
+        "location",
+        "period",
+        "weather",
+        "width"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+# Data preparation only; model-training dependencies are not selected yet.
+numpy==2.5.1
+Pillow==12.3.0

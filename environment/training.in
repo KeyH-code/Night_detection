@@ -1,0 +1,5 @@
+# Python 3.12, CUDA 13.0. Exact runtime dependency closures are platform-specific.
+torch==2.14.0+cu130
+torchvision==0.29.0+cu130
+ultralytics==8.4.171
+pytest==9.0.2
