@@ -38,6 +38,11 @@ selection:
   class_ids: [0, 2]
   tie_policy: retain_earlier
   checkpoint_period: 5
+monitor:
+  enabled: true
+  every: 1
+  batch: 16
+  workers: 0
 smoke:
   train_images: 64
   dev_images: 32

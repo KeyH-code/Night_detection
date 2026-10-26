@@ -1,4 +1,4 @@
-# Private datasets, image-level manifests, annotations and local audit previews.
+# Private datasets, experiment records and model weights.
 /data/
 /artifacts/
 /runs/
@@ -21,3 +21,9 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Local test cache.
+/.pytest_cache/
+
+# Library-generated user configuration, identifiers and local credentials.
+/Ultralytics/

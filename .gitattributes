@@ -1,2 +1,7 @@
 # Keep Linux bootstrap scripts runnable after Windows checkouts.
 *.sh text eol=lf
+# Runtime identity hashes must survive Windows/Linux checkouts unchanged.
+*.py text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.lock text eol=lf

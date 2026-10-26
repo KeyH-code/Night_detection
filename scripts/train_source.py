@@ -114,7 +114,8 @@ def acquire_weights(config):
 
 def code_identity():
     return {f'scripts/{name}': sha256(ROOT / 'scripts' / name)
-            for name in ('source_contract.py', 'source_trainer.py', 'train_source.py')}
+            for name in ('source_contract.py', 'source_trainer.py', 'train_source.py',
+                         'evaluate.py', 'train_monitor.py')}
 
 
 def identity(config, contract, weights, batch, scope):
@@ -165,8 +166,17 @@ def run_segment(config, contract, weights, run_dir, dataset_yaml, batch, scope,
     trainer.expected_batch = batch
     trainer.source_expected_args = expected
     trainer.stop_after_epoch = stop_after_epoch
+    observer = None
+    if scope in ('preflight', 'formal'):
+        from train_monitor import attach
+        observer = attach(trainer, run_dir, contract['ready']['counts']['source_train'],
+                          config.get('monitor', {}))
     trainer.attach_audits(audit_dir)
-    trainer.train()
+    try:
+        trainer.train()
+    finally:
+        if observer is not None:
+            observer.close()
     runtime = read_json(audit_dir / 'runtime.json')
     if runtime['optimizer_steps'] < 1 or runtime['batches'] < 1:
         raise ContractError(f'Forward/backward/optimizer evidence missing: {runtime}')

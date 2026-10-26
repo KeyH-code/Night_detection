@@ -9,7 +9,7 @@ import tarfile
 from datetime import datetime, timezone
 
 from prepare_soda10m import sha256, write_json
-from review_soda10m import clip_box
+from normalize import clip_box
 from make_splits import frozen_state
 
 

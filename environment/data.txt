@@ -1,0 +1,3 @@
+# Data only; training uses separate platform locks.
+numpy==2.5.1
+Pillow==12.3.0

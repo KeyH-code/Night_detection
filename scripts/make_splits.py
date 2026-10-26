@@ -61,14 +61,11 @@ def safe_path(root, relative):
     return resolved
 
 
-def read_inputs(root, category_path):
+def read_inputs(root, category_path, protocol_path):
     audit = root / "audit"
     inventory = [json.loads(s) for s in (audit / "inventory.jsonl").read_text(encoding="utf-8").splitlines()]
     integrity = {r["key"]: r for r in map(json.loads, (audit / "image_integrity.jsonl").read_text(encoding="utf-8").splitlines())}
     norm = read_json(audit / "normalization.json")
-    scenes = read_json(audit / "scene_screening.json")
-    first = read_json(audit / "human_reviews/2026-10-25/interpretation.json")
-    second = read_json(audit / "human_reviews/2026-10-25-scene-v2-partial/interpretation.json")
     mapping = read_json(category_path)["category_mapping"]
     require([m["training_id"] for m in mapping] == list(range(6)), "Mapping must be IDs 0..5")
     inputs = {"inventory_sha256": sha256(audit / "inventory.jsonl"),
@@ -97,30 +94,18 @@ def read_inputs(root, category_path):
     for r in inventory:
         require(all(r[k] == images[r["key"]][k] for k in ("file_name", "width", "height", "period", "city", "location", "weather")), "Inventory metadata mismatch")
         require(r["box_count"] == len(annotations[r["key"]]), "Inventory annotation count mismatch")
-    for name, expected in scenes["input_sha256"].items():
-        require(sha256(audit / name) == expected, f"Scene input changed: {name}")
-    require(scenes["annotation_sha256"] == inputs["raw_annotation_sha256"], "Scene annotations differ")
-    require(first["dataset_fingerprint"] == second["dataset_fingerprint"] == scenes["dataset_fingerprint"], "Review dataset mismatch")
-    require(scenes["previous_interpretation_sha256"] == sha256(audit / "human_reviews/2026-10-25/interpretation.json"), "Prior review changed")
-    for dirname, review in (("2026-10-25", first), ("2026-10-25-scene-v2-partial", second)):
-        require(review["annotation_sha256"] == inputs["raw_annotation_sha256"], "Review annotations differ")
-        require(sha256(audit / "human_reviews" / dirname / "export.original.json") == review["source_export_sha256"], "Human original export changed")
-    excluded = {r["id"] for r in first["group_sample"]["groups"] if r["original_verdict"] == "scene"}
-    excluded.add("probe-e9121c8945b0")
-    confirmed = {r["object_id"] for r in second["groups"] if r["verdict"] == "same_scene_changed"}
-    selected = [g for g in scenes["groups"] if g["id"] not in excluded and (g["origin"] == "strict" or g["id"] in confirmed)]
-    protocol = {"schema_version": 1, "version": PROTOCOL_VERSION, "seed": SEED,
-                "period_policy": "official period unchanged", "sequence_identity_verified": False,
-                "group_policy": "strict candidates except human scene-only/different-scene negatives; expanded only human-confirmed same_scene_changed; transitive union; all images retained",
-                "strict_thresholds": {"phash_max": 6, "dhash_max": 10},
-                "excluded_candidate_ids": sorted(excluded), "human_confirmed_ids": sorted(confirmed),
-                "selected_groups": [{"id": g["id"], "origin": g["origin"], "keys": sorted(g["keys"])} for g in sorted(selected, key=lambda g: g["id"])],
-                "evidence_sha256": {str(p.relative_to(root)).replace("\\", "/"): sha256(p) for p in [audit / "scene_screening.json", audit / "human_reviews/2026-10-25/interpretation.json", audit / "human_reviews/2026-10-25-scene-v2-partial/interpretation.json"]},
-                "fingerprint_algorithm": "sha256 UTF-8 JSON sort_keys=True ensure_ascii=False separators=(',',':') of fingerprint_components",
-                "fingerprint_components": inputs, "normalization_version": norm["version"],
-                "allocation": "largest group first; deterministic seeded ties; lexicographic count, pedestrian, attributes, auxiliary presence squared-error; equal-size local swaps, 8 passes x 6000 seeded proposals; stop on no improvement",
-                "count_tolerance": 5, "night_dev_test_min_pedestrian_images": 40,
-                "development_gradient_training": False, "final_test_executed": False}
+    protocol = read_json(protocol_path)
+    require(protocol["fingerprint_components"] == inputs, "Protocol input fingerprint mismatch")
+    require(protocol["normalization_version"] == norm["version"], "Protocol normalization mismatch")
+    require(protocol["seed"] == SEED and protocol["version"] == PROTOCOL_VERSION, "Unsupported protocol version/seed")
+    for relative, expected in protocol["evidence_sha256"].items():
+        evidence = safe_path(root, relative)
+        require(sha256(evidence) == expected, f"Protocol evidence changed: {relative}")
+        content = read_json(evidence)
+        if "source_export_sha256" in content:
+            require(sha256(evidence.parent / "export.original.json") == content["source_export_sha256"], "Human original export changed")
+        for name, expected_hash in content.get("input_sha256", {}).items():
+            require(sha256(audit / name) == expected_hash, f"Scene input changed: {name}")
     return inventory, integrity, annotations, mapping, protocol
 
 
@@ -250,8 +235,10 @@ def describe(rows):
             **{a: dict(sorted(Counter(r[a] for r in rows).items())) for a in ("city", "location", "weather")}}
 
 
-def prepare(root, category_path, stage):
-    inventory, integrity, annotations, mapping, protocol = read_inputs(root, category_path)
+def prepare(root, category_path, stage, protocol_path=None):
+    protocol_path = protocol_path or root / "splits" / f"{stage}_v1/protocol.json"
+    require(Path(protocol_path).is_file(), "Supply --protocol for a new data version; frozen versions use their own protocol.json")
+    inventory, integrity, annotations, mapping, protocol = read_inputs(root, category_path, protocol_path)
     selected = [r for r in inventory if (r["official_split"] == "train" if stage == "source" else r["official_split"] == "val" and r["period"] == "Night")]
     groups = group_rows(selected, protocol)
     allocation = allocate(groups, TARGETS[stage], stage == "night")
@@ -379,13 +366,14 @@ def main():
     p.add_argument("--stage", choices=("source", "night"), required=True)
     p.add_argument("--data-root", type=Path, default=Path("data/soda10m"))
     p.add_argument("--categories", type=Path, default=Path(__file__).resolve().parents[1] / "configs/soda10m_categories.json")
+    p.add_argument("--protocol", type=Path, help="Explicit reviewed protocol for generation/planning")
     args = p.parse_args()
     root = args.data_root.resolve()
     version = root / "splits" / f"{args.stage}_v1"
     if args.command == "verify":
         print(json.dumps(validate_version(root, version, args.stage, args.categories), ensure_ascii=False, indent=2))
         return
-    prepared = prepare(root, args.categories, args.stage)
+    prepared = prepare(root, args.categories, args.stage, args.protocol)
     if args.command == "plan":
         print(json.dumps({p: describe(r) for p, r in prepared[0].items()}, ensure_ascii=False, indent=2))
         return

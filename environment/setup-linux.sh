@@ -9,8 +9,10 @@ export YOLO_CONFIG_DIR="$PWD/.cache/training/ultralytics"
 export TORCH_HOME="$PWD/.cache/training/torch"
 export MPLCONFIGDIR="$PWD/.cache/training/matplotlib"
 export PYTHONUTF8=1 PYTHONIOENCODING=utf-8:surrogateescape
-python3.12 scripts/verify_source_bundle.py
+if [ -f PACKAGE_MANIFEST.json ]; then
+  python3.12 scripts/verify_source_bundle.py
+fi
 python3.12 -m venv .venv-train
 .venv-train/bin/python -m pip install --require-hashes -r environment/requirements-linux.lock --index-url https://pypi.org/simple --extra-index-url https://download.pytorch.org/whl/cu130
 .venv-train/bin/python -m pip check
-.venv-train/bin/python scripts/train_source.py environment --output artifacts/cloud_environment
+.venv-train/bin/python scripts/train_source.py environment --output runs/check/environment

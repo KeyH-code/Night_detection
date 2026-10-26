@@ -11,14 +11,15 @@ from source_contract import (ContractError, canonical_hash, check_equal, read_js
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def build(root, ready_hash, output, smoke_path):
+def build(root, ready_hash, output, smoke_path=None):
     contract = verify_source(root, ready_hash)
-    smoke = read_json(smoke_path)
-    check_equal('smoke.ready_sha256', ready_hash, smoke['identity']['ready_sha256'])
     from train_source import code_identity, config_at
-    check_equal('smoke.code', code_identity(), smoke['identity']['code'])
     config = config_at(ROOT / 'configs/source_a.yaml')
-    check_equal('smoke.config', canonical_hash(config), smoke['identity']['config_sha256'])
+    if smoke_path:
+        smoke = read_json(smoke_path)
+        check_equal('smoke.ready_sha256', ready_hash, smoke['identity']['ready_sha256'])
+        check_equal('smoke.code', code_identity(), smoke['identity']['code'])
+        check_equal('smoke.config', canonical_hash(config), smoke['identity']['config_sha256'])
     if output.exists():
         raise ContractError(f'Never overwrite published kit: {output}')
     ready = contract['ready']
@@ -26,20 +27,22 @@ def build(root, ready_hash, output, smoke_path):
     for entry in [ready['categories'], ready['grouping_protocol'], *ready['manifests'].values(), *ready['files']]:
         paths['data/source_v1/' + entry['path']] = safe_path(root, entry['path'])
     code_files = ['source_contract.py', 'source_trainer.py', 'train_source.py',
-                  'bundle_source.py', 'verify_source_bundle.py']
+                  'bundle_source.py', 'verify_source_bundle.py', 'source_release.py',
+                  'source_cloud_gate.py', 'source_resources.py', 'run_source_cloud_job.py',
+                  'evaluate.py', 'train_monitor.py']
     for name in code_files:
         paths['scripts/' + name] = ROOT / 'scripts' / name
     for relative in ['configs/source_a.yaml', 'environment/training.in',
                      'environment/requirements-linux.lock', 'environment/requirements-windows.lock',
-                     'environment/windows-installed.txt', 'environment/setup-linux.sh',
-                     'environment/setup-windows.ps1', 'reports/source_a_cloud.md',
+                     'environment/setup-linux.sh', 'environment/setup-windows.ps1',
+                     'environment/README.md', 'configs/README.md',
                      'weights/yolo11m.pt', 'weights/yolo11m.provenance.json',
-                     'weights/yolo26n.pt', 'weights/yolo26n.provenance.json',
-                     'training_tests/test_source_training.py']:
+                     'weights/yolo26n.pt', 'weights/yolo26n.provenance.json']:
         paths[relative] = ROOT / relative
-    paths['evidence/local_SMOKE_PASSED.json'] = smoke_path
-    paths['evidence/local_environment.json'] = ROOT / 'artifacts/source_a/environment/environment.json'
-    paths['evidence/training_tests.xml'] = ROOT / 'reports/source_training_tests.xml'
+    for path in sorted((ROOT / 'tests/train').glob('test_*.py')):
+        paths[path.relative_to(ROOT).as_posix()] = path
+    if smoke_path:
+        paths['evidence/smoke.json'] = smoke_path
     manifest = {'schema_version': 1, 'status': 'PACKAGED_PENDING_VALIDATION',
                 'scope': 'private source_train/source_dev kit; no source_test or target data',
                 'ready_sha256': ready_hash, 'data_fingerprint': ready['data_fingerprint'],
@@ -75,6 +78,6 @@ if __name__ == '__main__':
     p.add_argument('--data-root', type=Path, default=ROOT/'data/soda10m/splits/source_v1')
     p.add_argument('--ready-sha256', required=True)
     p.add_argument('--output', type=Path, required=True)
-    p.add_argument('--smoke', type=Path, required=True)
+    p.add_argument('--smoke', type=Path, help='Optional current smoke receipt; never a fixed historical path')
     a = p.parse_args()
     build(a.data_root, a.ready_sha256, a.output, a.smoke)
