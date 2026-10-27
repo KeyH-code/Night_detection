@@ -66,13 +66,80 @@ def plot(run, output):
         fig.tight_layout(pad=1.6); fig.savefig(output / 'ap.png'); plt.close(fig)
 
 
+def diagnostic(run, output):
+    """Rebuild source diagnostic figures solely from retained numeric evidence."""
+    import numpy as np
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    train = json.loads((run/'train/metrics.json').read_text(encoding='utf-8'))
+    dev = json.loads((run/'dev/metrics.json').read_text(encoding='utf-8'))
+    points = json.loads((run/'workpoints.json').read_text(encoding='utf-8'))
+    protocol = json.loads((run/'protocol.json').read_text(encoding='utf-8'))
+    names = list(points)
+    output.mkdir(parents=True, exist_ok=True)
+    with np.load(run/'train/pr.npz', allow_pickle=False) as tr, np.load(run/'dev/pr.npz', allow_pickle=False) as dv:
+        fig, axes = plt.subplots(2, 3, figsize=(12, 7), sharex=True, sharey=True)
+        for ax, name in zip(axes.flat, names):
+            for curves, label, color in [(tr, 'Train native AP PR', '#2878b5'), (dv, 'Dev native AP PR', '#d55e00')]:
+                p, r = curves[name+'_ap_precision'][:, 0], curves[name+'_ap_recall'][:, 0]
+                ax.plot(r, p, label=label, color=color, alpha=.85)
+            ax.plot(dv[name+'_work_recall'], dv[name+'_work_precision'], color='#228833',
+                    linestyle=':', label='Dev filter/rematch PR')
+            point = dev['per_class'][name]['workpoint']
+            if point['precision'] is not None:
+                ax.scatter(point['recall'], point['precision'], color='black', s=28, zorder=5)
+            ax.axhline(protocol['rules']['classes'][name]['precision'], color='#777777', linestyle='--', linewidth=.8)
+            ax.set(title=name, xlim=(0, 1), ylim=(0, 1), xlabel='Recall', ylabel='Precision')
+            ax.grid(alpha=.2)
+        axes.flat[0].legend(fontsize=7)
+        fig.suptitle('Fixed A best | IoU 0.5 | black: selected dev workpoint; dashed: required precision')
+        fig.tight_layout(); fig.savefig(output/'pr.png', dpi=140); plt.close(fig)
+    errors = json.loads((run/'errors.json').read_text(encoding='utf-8'))['dev']
+    kinds = sorted({k for v in errors.values() for k in v})
+    fig, ax = plt.subplots(figsize=(11, 4.5))
+    bottoms = np.zeros(len(names))
+    for kind in kinds:
+        values = np.array([errors[n].get(kind, 0) for n in names])
+        ax.bar(np.arange(len(names))-.15, values, width=.5, bottom=bottoms, label=kind)
+        bottoms += values
+    fn = [dev['per_class'][n]['workpoint']['fn'] for n in names]
+    ax.bar(np.arange(len(names))+.25, fn, width=.2, color='#aaaaaa', label='FN (separate GT side)')
+    ax.set(xticks=np.arange(len(names)), xticklabels=names, ylabel='Count',
+           title='Dev errors at selected class workpoints | FP types are candidate attributions')
+    ax.legend(fontsize=7, ncols=2); ax.grid(axis='y', alpha=.2)
+    fig.tight_layout(); fig.savefig(output/'errors.png', dpi=140); plt.close(fig)
+    with (run/'slices.csv').open(encoding='utf-8', newline='') as stream:
+        slices = list(csv.DictReader(stream))
+    bins = ['width_le8', 'width_8_16', 'width_gt16']
+    fig, axes = plt.subplots(2, 3, figsize=(12, 7), sharey=True)
+    for ax, name in zip(axes.flat, names):
+        for purpose, delta, color in [('train', -.18, '#2878b5'), ('dev', .18, '#d55e00')]:
+            selected = {r['slice']: r for r in slices if r['purpose'] == purpose and r['class'] == name}
+            values = [float(selected[b]['recall50']) if b in selected else np.nan for b in bins]
+            bars = ax.bar(np.arange(3)+delta, values, .34, label=purpose, color=color)
+            for b, bar in zip(bins, bars):
+                if b in selected:
+                    ax.text(bar.get_x()+bar.get_width()/2, min(.98, bar.get_height()+.025),
+                            'n='+selected[b]['gt'], ha='center', fontsize=7, rotation=90)
+        ax.set(title=name, ylim=(0, 1.15), xticks=np.arange(3), xticklabels=['<=8', '(8,16]', '>16'],
+               xlabel='GT width at 640 reference (px)', ylabel='Recall @ IoU 0.5')
+        ax.grid(axis='y', alpha=.2)
+    axes.flat[0].legend()
+    fig.suptitle('GT width at 640 reference | fixed dev thresholds applied to train and dev')
+    fig.tight_layout(); fig.savefig(output/'sizes.png', dpi=140); plt.close(fig)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run', type=Path, default=Path('runs/a_001'))
     parser.add_argument('--output', type=Path)
     parser.add_argument('--evaluation', type=Path, help='Fixed-checkpoint train/dev comparison directory')
+    parser.add_argument('--diagnostic', type=Path, help='Retained fixed-checkpoint diagnostic evidence')
     args = parser.parse_args()
-    if args.evaluation:
+    if args.diagnostic:
+        diagnostic(args.diagnostic.resolve(), args.output or Path('plots') / args.diagnostic.name)
+    elif args.evaluation:
         comparison(args.evaluation.resolve(), args.output or Path('plots') / args.evaluation.name)
     else:
         plot(args.run.resolve(), args.output or Path('plots') / args.run.name)

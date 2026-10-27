@@ -4,9 +4,9 @@
 
 ## 状态
 
-首次正式训练`a_001`已完成100轮，best第80轮；source_dev行人/汽车AP50:95宏平均0.500039822187496。首训工程验收通过、best/last本地SHA通过，但A尚未完成六类质量验收或冻结。当前处于S2诊断准备，详见[阶段计划](plan.md)与[验收规则](RULES.md)。
+首次正式训练`a_001`已完成100轮，best第80轮；原source_dev行人/汽车AP50:95宏平均0.500039822187496。首训工程验收通过、best/last本地SHA通过，但A尚未完成六类质量验收或冻结。S2自动诊断与Agent初审已完成，待用户复审，详见[阶段计划](plan.md)与[验收规则](RULES.md)。
 
-六类门槛、保护条件、证据要求、选模与停止规则已整理；活动训练脚本尚未落实新资格选模和停止规则。用户确认旧云任务已关机/已停止，未独立核验API或实际账单。最终测试与夜间实验未运行，本轮文档更新未启动评价或训练。
+固定best的统一诊断覆盖4000张train和500张dev，规则工作点下行人Recall39.88%、三轮车31.82%，仍未过线；938项gpt-6-luna视觉初审待用户复审，不能称A冻结。活动训练脚本尚未落实新资格选模和停止规则。用户确认旧云任务已关机/已停止，未独立核验API或实际账单。最终测试、夜间实验和新训练未启动。
 
 ## 入口
 
@@ -15,7 +15,8 @@
 | 结构与规则 | [STRUCTURE.md](STRUCTURE.md)、[AGENTS.md](AGENTS.md) |
 | 实验验收与冻结 | [RULES.md](RULES.md) |
 | 计划 | [plan.md](plan.md) |
-| 阶段文档 | [specs/](specs/)，每阶段独立目录；当前[S2计划](specs/s2/plan.md)为待审核草案，先计划后实施 |
+| 阶段文档 | [specs/](specs/)，每阶段独立目录；当前[S2计划](specs/s2/plan.md)待用户复审关闭 |
+| 固定best诊断 | [运行身份](runs/a_001_diag/run.json)、[数值对照](runs/a_001_diag/comparison.csv)、[初审与复审队列](runs/a_001_diag/cases.jsonl)、[状态](runs/a_001_diag/review.json)；结论见[a.md诊断](reports/a.md#诊断) |
 | 数据报告 | [data.md](reports/data.md) |
 | 正式训练报告 | [a.md](reports/a.md) |
 | 4000张训练图/标签 | [images](data/soda10m/splits/source_v1/images/source_train)、[labels](data/soda10m/splits/source_v1/labels/source_train) |
@@ -40,4 +41,4 @@
 .venv-train/Scripts/python.exe -m pytest tests/train -q -p no:cacheprovider
 ```
 
-这些检查不运行模型最终测试。数据、运行记录和权重不入Git；公开发布前另核验许可。
+这些检查不运行模型最终测试。Git同步代码、配置/环境锁、规划、报告及可复建图表；`.gitignore`排除数据、原始实验记录、权重、虚拟环境、缓存、日志和凭据。这些本地内容不会随clone恢复，报告中指向data/runs/weights的链接用于本地追溯；数据和权重另按许可及实验清单管理，不通过Git上传。

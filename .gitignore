@@ -1,4 +1,4 @@
-# Private datasets, experiment records and model weights.
+# Local datasets, experiment evidence, exports and model weights.
 /data/
 /artifacts/
 /runs/
@@ -8,22 +8,53 @@
 /exports/
 /.venv*/
 /.cache/
-__pycache__/
-*.py[cod]
 *.pt
 *.pth
+*.ckpt
+*.safetensors
 *.onnx
+*.onnx.data
 *.engine
 *.tar
 *.tar.gz
 *.zip
 *.part
+
+# Local secrets and authentication material; examples may be versioned explicitly.
 .env
 .env.*
 !.env.example
+.ssh/
+*.pem
+*.key
+*.p12
+*.pfx
+.netrc
+_netrc
+.git-credentials
+/credentials.json
 
-# Local test cache.
+# Python/tool caches and generated logs; do not ignore maintained tests or reports.
+__pycache__/
+*.py[cod]
 /.pytest_cache/
+/.mypy_cache/
+/.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+.coverage.*
+coverage.xml
+/htmlcov/
+*.log
+events.out.tfevents.*
+
+# Local editor/OS residue and incomplete writes.
+*.tmp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini
 
 # Library-generated user configuration, identifiers and local credentials.
 /Ultralytics/
