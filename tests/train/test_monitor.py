@@ -75,6 +75,25 @@ def test_all_required_callbacks_registered():
     obj.close()
 
 
+def test_s3_dev_only_epoch_never_requests_train_inference(tmp_path):
+    import numpy as np
+    from source_contract import S3_EVALUATION, sha256
+    from train_monitor import S3Observation
+    obj = S3Observation.__new__(S3Observation)
+    obj.trainer = NS(epoch=0, save_dir=tmp_path, source_identity={'evaluation_policy':S3_EVALUATION})
+    calls=[]
+    def evaluate(purpose):
+        calls.append(purpose)
+        assert purpose=='source_dev'
+        return {'metrics':{'images':500},'metric_scope':'fixed300'}, [], {'scores':np.array([.5])}, []
+    obj.evaluate=evaluate
+    result,_,_=obj.epoch()
+    assert calls==['source_dev']
+    assert result['train']=={'status':'deferred_local','images_evaluated':0}
+    assert result['dev']['metrics']['images']==500
+    assert result['pr_sha256']==sha256(tmp_path/'observations/epoch001.npz')
+
+
 def test_full_epoch_coverage_is_required_for_cloud_receipt(tmp_path):
     identity = {'fixture': 'identity'}
     write_json(tmp_path/'source_run.json', {'identity': identity})
@@ -123,3 +142,42 @@ def test_real_validator_callback_preserves_ema_and_selection_on_synthetic_data(t
         assert (run/'train_metrics.csv').is_file()
     finally:
         monitor.close()
+
+
+def test_observation_restores_rng_and_rejects_any_optimizer_or_ema_mutation():
+    import copy
+    import numpy as np
+    import random
+    import torch
+    from train_monitor import read_only_observation, rng_state, restore_rng
+    model = torch.nn.Linear(2, 1)
+    optimizer = torch.optim.SGD(model.parameters(), lr=.1, momentum=.9)
+    t = NS(model=model, ema=NS(ema=copy.deepcopy(model), updates=3), optimizer=optimizer,
+           scaler=torch.amp.GradScaler('cpu', enabled=False),
+           scheduler=torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _: 1.))
+    state = rng_state()
+    expected = (random.random(), np.random.random(), torch.rand(2))
+    restore_rng(state)
+    with read_only_observation(t):
+        random.random(); np.random.random(); torch.rand(25)
+    actual = (random.random(), np.random.random(), torch.rand(2))
+    assert actual[:2] == expected[:2] and torch.equal(actual[2], expected[2])
+    with pytest.raises(ContractError, match='training-state'):
+        with read_only_observation(t):
+            optimizer.param_groups[0]['lr'] = .3
+
+
+def test_compact_epoch_pr_retains_lossless_scores_and_ten_iou_curves():
+    import numpy as np
+    from train_monitor import compact_curves
+    tp = np.tile(np.array([1,1,2])[:,None], (1,10))
+    curves = {'train_pedestrian_ap_scores': np.array([.9,.8,.7], dtype=np.float32),
+              'train_pedestrian_ap_tp': tp,
+              'train_pedestrian_ap_precision': tp/np.arange(1,4)[:,None],
+              'train_pedestrian_ap_recall': tp/2,
+              'train_pedestrian_ap_fp': np.arange(1,4)[:,None]-tp}
+    packed = compact_curves(curves)
+    assert len(packed) == 2 and packed['train_pedestrian_ap_tp'].dtype == np.int32
+    assert np.array_equal(packed['train_pedestrian_ap_scores'], curves['train_pedestrian_ap_scores'])
+    assert np.array_equal(packed['train_pedestrian_ap_tp']/np.arange(1,4)[:,None], curves['train_pedestrian_ap_precision'])
+    assert np.array_equal(packed['train_pedestrian_ap_tp']/2, curves['train_pedestrian_ap_recall'])

@@ -91,8 +91,15 @@ def main():
     p.add_argument('--preflight-receipt', type=Path)
     p.add_argument('--preflight-receipt-sha256')
     p.add_argument('--checkpoint', type=Path)
+    p.add_argument('--config', type=Path)
+    p.add_argument('--arm', choices=['R', 'S'], default='R')
+    p.add_argument('--seed', type=int, choices=[17, 29, 43], default=17)
     args = p.parse_args()
     root, job, output = args.root.resolve(), args.job_dir.resolve(), args.output.resolve()
+    config_path = args.config.resolve() if args.config else root/'configs/source_a.yaml'
+    if not config_path.is_relative_to(root/'configs'):
+        raise ContractError('Runner config must stay inside configs')
+    s3 = config_path.name == 'source_s3.yaml'
     own_hash = sha256(Path(__file__))
     check_equal('external runner SHA', args.expected_runner_sha256, own_hash)
     for dest in (job, output):
@@ -106,18 +113,30 @@ def main():
     if args.mode != 'preflight':
         receipt = check_preflight_receipt(args.preflight_receipt, args.preflight_receipt_sha256,
                                           args.expected_identity_sha256, own_hash)
+        if s3:
+            from source_contract import S3_EVALUATION
+            check_equal('S3 receipt evaluation profile', S3_EVALUATION, receipt.get('evaluation_policy'))
+            check_equal('S3 receipt experiment', 'source_s3', receipt.get('experiment'))
+            check_equal('S3 receipt arm/seed', [args.arm, args.seed], receipt.get('arm_seed'))
+            check_equal('S3 full preflight', [4000, 500, 2, 100], receipt.get('full_preflight'))
     # Same process-level cache isolation as the fixed original entry; no model import here.
     from train_source import configure_paths
     configure_paths()
     gate_command = [sys.executable, str(root/'scripts/source_cloud_gate.py'), '--root', str(root),
                     '--output', str(job/'resource_gate.json'), '--identity-output', str(job/'runtime_identity.json'),
                     '--expected-identity-sha256', args.expected_identity_sha256, '--enforce']
+    if s3:
+        gate_command += ['--config', str(config_path), '--arm', args.arm, '--seed', str(args.seed)]
     data = root/'data/source_v1'
     if not data.exists() and (root/'data/soda10m/splits/source_v1').is_dir():
         data = root/'data/soda10m/splits/source_v1'
     train_command = [sys.executable, str(root/'scripts/train_source.py'), args.mode,
-                     '--data-root', str(data), '--config', str(root/'configs/source_a.yaml'),
+                     '--data-root', str(data), '--config', str(config_path),
                      '--ready-sha256', READY, '--output', str(output)]
+    if s3:
+        train_command += ['--arm', args.arm, '--seed', str(args.seed)]
+        train_command += ['--resource-gate', str(job/'resource_gate.json'),
+                          '--runtime-identity-sha256', args.expected_identity_sha256]
     if args.mode == 'preflight':
         if args.hourly_price is not None:
             if args.hourly_price <= 0 or not args.currency:
@@ -133,6 +152,12 @@ def main():
         checkpoint_info = read_json(args.checkpoint.with_suffix('.pt.sha256.json'))
         if checkpoint_info['identity']['scope'] not in ('preflight','formal'):
             raise ContractError('Cloud runner refuses smoke checkpoint')
+        if s3:
+            check_equal('S3 resume scope', 'formal', checkpoint_info['identity']['scope'])
+            recipe = read_json(safe_path(root, receipt['recipe_relative_path']))
+            check_equal('S3 resumed formal recipe', receipt['recipe_sha256'], sha256(safe_path(root, receipt['recipe_relative_path'])))
+            expected = dict(recipe['identity'], scope=checkpoint_info['identity']['scope'])
+            check_equal('S3 resume same preflight identity', expected, checkpoint_info['identity'])
         train_command += ['--checkpoint', str(args.checkpoint.resolve())]
     code = run_guarded(gate_command, train_command, job, args.expected_identity_sha256,
                        args.mode, own_hash)
@@ -143,7 +168,18 @@ def main():
             recipe = output/'FROZEN_RECIPE.json'
             parsed = read_json(recipe)
             check_equal('preflight frozen recipe', 'frozen', parsed['status'])
-            check_equal('preflight core identity', BASE_CODE, parsed['identity']['code'])
+            if s3:
+                from train_source import code_identity
+                check_equal('S3 current core identity', code_identity(), parsed['identity']['code'])
+                runtime_identity = read_json(job/'resource_gate.json')['runtime_identity']
+                check_equal('S3 resolved config identity', runtime_identity['resolved_config_sha256'], parsed['identity']['config_sha256'])
+                check_equal('S3 full runtime in recipe', args.expected_identity_sha256, parsed['identity']['runtime_identity_sha256'])
+                check_equal('S3 runtime arm/seed', [args.arm, args.seed], [runtime_identity['arm'], runtime_identity['seed']])
+                check_equal('S3 preflight counts', [4000, 500], parsed['preflight_counts'])
+                check_equal('S3 preflight schedule', 100, parsed['schedule_epochs'])
+                check_equal('S3 preflight epochs', 2, parsed['preflight_runtime']['epoch_1based'])
+            else:
+                check_equal('preflight core identity', BASE_CODE, parsed['identity']['code'])
             check_equal('preflight frozen data identity', READY, parsed['identity']['ready_sha256'])
             from train_monitor import audit_observation
             train_observation = audit_observation(output/'preflight_batch16' if parsed['identity']['batch'] == 16
@@ -155,6 +191,12 @@ def main():
                        'hourly_price':args.hourly_price, 'currency':args.currency,
                        'finished_utc':utc_now(), 'train_observation':train_observation,
                        'cost_review': 'Use measured full-train evaluation overhead in controller timing/budget review'}
+            if s3:
+                receipt.update(experiment='source_s3', arm_seed=[args.arm, args.seed], full_preflight=[4000,500,2,100])
+                from source_contract import S3_EVALUATION
+                receipt.update(evaluation_policy=S3_EVALUATION, epoch_evaluation={'source_dev':500,'source_train':0},
+                               final_evaluation='deferred_local',
+                               cost_review='Use measured gradient + full-dev selection time; full train/final exports run locally')
             atomic_json(job/'PREFLIGHT_RECEIPT.json', receipt)
             atomic_json(job/'PREFLIGHT_RECEIPT.sha256.json', {'sha256':sha256(job/'PREFLIGHT_RECEIPT.json')})
         state = read_json(job/'status.json')

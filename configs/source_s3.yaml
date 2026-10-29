@@ -1,0 +1,172 @@
+schema_version: 2
+experiment: source_s3
+numerics:
+  amp_initial_scale: 1.0
+dataset:
+  version: source_v1
+  normalization_version: clip_xyxy_to_image_bounds_v1
+  names:
+  - pedestrian
+  - cyclist
+  - car
+  - truck
+  - tram
+  - tricycle
+  train_purpose: source_train
+  dev_purpose: source_dev
+environment:
+  python: '3.12'
+  torch: 2.14.0+cu130
+  torchvision: 0.29.0+cu130
+  ultralytics: 8.4.171
+model:
+  path: weights/yolo11m.pt
+  provenance: weights/yolo11m.provenance.json
+  url: https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11m.pt
+training:
+  epochs: 100
+  time: null
+  patience: 0
+  batch: 16
+  imgsz: 640
+  save: true
+  save_period: -1
+  cache: false
+  device: '0'
+  workers: 4
+  exist_ok: true
+  pretrained: true
+  cls_remap: true
+  optimizer: SGD
+  verbose: true
+  seed: 17
+  deterministic: true
+  single_cls: false
+  rect: false
+  cos_lr: true
+  close_mosaic: 10
+  amp: true
+  fraction: 1.0
+  profile: false
+  freeze: null
+  multi_scale: 0.0
+  compile: false
+  channels_last: null
+  overlap_mask: true
+  mask_ratio: 4
+  dropout: 0.0
+  val: true
+  split: val
+  save_json: false
+  conf: null
+  iou: 0.7
+  max_det: 300
+  quantize: null
+  dnn: false
+  plots: false
+  nms: null
+  source: null
+  vid_stride: 1
+  stream_buffer: false
+  visualize: false
+  augment: false
+  agnostic_nms: false
+  classes: null
+  retina_masks: false
+  embed: null
+  show: false
+  save_frames: false
+  save_txt: false
+  save_conf: false
+  save_crop: false
+  show_labels: true
+  show_conf: true
+  show_boxes: true
+  line_width: null
+  format: torchscript
+  optimize: false
+  dynamic: false
+  simplify: true
+  opset: null
+  workspace: null
+  lr0: 0.01
+  lrf: 0.01
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 3
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  distill_model: null
+  dis: 6.0
+  box: 7.5
+  cls: 0.5
+  cls_pw: 0.0
+  dfl: 1.5
+  pose: 12.0
+  kobj: 1.0
+  rle: 1.0
+  angle: 1.0
+  dlog: 1.0
+  dgrad: 0.5
+  dlam: 1.0
+  nbs: 64
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  degrees: 0.0
+  translate: 0.1
+  scale: 0.5
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0
+  fliplr: 0.5
+  bgr: 0.0
+  mosaic: 1.0
+  mixup: 0.0
+  cutmix: 0.0
+  copy_paste: 0.0
+  copy_paste_mode: flip
+  auto_augment: randaugment
+  erasing: 0.4
+  cfg: null
+  tracker: tracktrack.yaml
+selection:
+  metric: pedestrian_car_ap50_95_macro
+  class_ids:
+  - 0
+  - 2
+  tie_policy: retain_earlier
+  checkpoint_period: 0
+  policy: six_class_rules_v1
+  stop_policy: horizon_only
+monitor:
+  profile: dev_only_local_final_v1
+  enabled: true
+  every: 1
+  batch: 1
+  workers: 0
+cloud:
+  gpu_name_contains: RTX 4090
+  min_vram_gib: 23
+  min_cpus: 8
+  min_ram_gib: 30
+  min_free_disk_gib: 40
+  min_total_disk_gib: 46
+sampling:
+  arm: R
+  algorithm: small_thin_union_weighted_v1
+  target_weight: 2
+  other_weight: 1
+  slots: 4000
+  target_images: 922
+  target_gt: 1617
+preflight:
+  epochs: 2
+  schedule_epochs: 100
+  train_images: 4000
+  dev_images: 500
+policy:
+  rules: RULES.md
+  reference: runs/a_001/train/best_dev_metrics.json
+  diagnostic_reference: runs/a_001_diag/dev/metrics.json
+  slice_reference: runs/a_001_diag/slices.csv

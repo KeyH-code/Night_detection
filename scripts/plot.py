@@ -130,14 +130,127 @@ def diagnostic(run, output):
     fig.tight_layout(); fig.savefig(output/'sizes.png', dpi=140); plt.close(fig)
 
 
+def source_pair(evidence, output):
+    """Rebuild S3 pair figures from sealed comparison and sampling numbers only."""
+    import numpy as np
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from source_policy import load_rules
+    from source_contract import NAMES
+    result = json.loads((evidence/'comparison.json').read_text(encoding='utf-8'))
+    runs = result['runs']
+    rules = load_rules(Path(runs[0]['run'])/'code/RULES.md')
+    output.mkdir(parents=True, exist_ok=True)
+    colors = {'R': '#2878b5', 'S': '#d55e00'}
+    seeds = ', '.join(str(p['seed']) for p in result['per_seed'])
+    fig, axes = plt.subplots(2, 1, figsize=(11, 7))
+    for arm, offset in [('R', -.18), ('S', .18)]:
+        rows = [r for r in runs if r['arm'] == arm]
+        ap = [100*np.mean([r[n+'/ap50_95'] for r in rows]) for n in NAMES]
+        recall = []
+        for n in NAMES:
+            valid = all(r[n+'/origin'] == 'rule' and r[n+'/precision'] is not None
+                        and r[n+'/precision'] >= rules['classes'][n]['precision'] for r in rows)
+            recall.append(100*np.mean([r[n+'/recall'] for r in rows]) if valid else np.nan)
+        for ax, values in zip(axes, (ap, recall)):
+            bars = ax.bar(np.arange(6)+offset, values, width=.36, color=colors[arm], label=arm)
+            for bar, value in zip(bars, values):
+                if np.isfinite(value):ax.text(bar.get_x()+bar.get_width()/2, value+1, f'{value:.1f}', ha='center', fontsize=8)
+                else:ax.text(bar.get_x()+bar.get_width()/2, 2, 'N/A', ha='center', fontsize=7, rotation=90)
+    for ax, title in zip(axes, ('Dev AP50:95 (%)', 'Dev recall at saved threshold satisfying required precision (%)')):
+        ax.set(xticks=np.arange(6), xticklabels=NAMES, ylim=(0, 106), title=title)
+        ax.grid(axis='y', alpha=.2);ax.set_axisbelow(True);ax.spines[['top','right']].set_visible(False)
+    axes[0].legend();fig.suptitle('Source R/S | training seed(s): '+seeds)
+    fig.tight_layout();fig.savefig(output/'metrics.png', dpi=140);plt.close(fig)
+
+    keys = ['pedestrian/ap50_95', 'pedestrian/recall', 'pedestrian/area_S/recall',
+            'pedestrian/width_le8/recall', 'pedestrian/small_thin_union/recall']
+    labels = ['AP50:95', 'Constrained recall', 'Original small area recall',
+              'Width at 640 <=8 px recall', 'Small/thin union recall']
+    fig, ax = plt.subplots(figsize=(10, 4.5))
+    for i, key in enumerate(keys):
+        v = result['effects'][key]
+        if v['mean_delta'] is None:
+            ax.text(0, i, 'undefined', va='center', ha='left');continue
+        if v['lower'] is not None and v['upper'] is not None:
+            ax.hlines(i, v['lower']*100, v['upper']*100, color=colors['S'], linewidth=2)
+        ax.scatter(v['mean_delta']*100, i, color=colors['S'], zorder=3)
+    ax.axvline(0, color='#555555', linestyle='--', linewidth=1)
+    ax.set(yticks=np.arange(len(keys)), yticklabels=labels, xlabel='S minus R (percentage points)',
+           title='Pedestrian effects | paired risk-group 95% intervals | fixed selected checkpoints')
+    ax.invert_yaxis();ax.grid(axis='x', alpha=.2);ax.spines[['top','right']].set_visible(False)
+    fig.tight_layout();fig.savefig(output/'effects.png', dpi=140);plt.close(fig)
+
+    with (evidence/'sampling.csv').open(encoding='utf-8', newline='') as stream:sample = list(csv.DictReader(stream))
+    fig, axes = plt.subplots(3, 1, figsize=(11, 8), sharex=True)
+    for arm in ('R','S'):
+        epochs = sorted({int(r['epoch']) for r in sample if r['arm'] == arm})
+        series = [[],[],[]]
+        for epoch in epochs:
+            rows = [r for r in sample if r['arm'] == arm and int(r['epoch']) == epoch]
+            series[0].append(100*np.mean([float(r['target_slots'])/float(r['slots']) for r in rows]))
+            series[1].append(np.mean([float(r['unique_images']) for r in rows]))
+            series[2].append(np.mean([float(r['augmented_pedestrian_width_le8']) for r in rows]))
+        for ax, values in zip(axes, series):ax.plot(epochs, values, label=arm, color=colors[arm])
+    off = [int(r['epoch']) for r in sample if r['mosaic_off'].lower() == 'true']
+    for ax, title, ylabel in zip(axes, ('Target-layer anchor slots', 'Distinct anchor images per epoch',
+                               'Final augmented pedestrian GT with width <=8 input pixels'), ('Slots (%)','Images','GT boxes')):
+        if off:ax.axvline(min(off), color='#555555', linestyle='--', label='Mosaic off')
+        ax.set(title=title, ylabel=ylabel);ax.grid(alpha=.2);ax.spines[['top','right']].set_visible(False)
+    axes[0].legend();axes[-1].set_xlabel('Epoch')
+    fig.suptitle('Actual training exposure | final boxes are not per-GT survival rates')
+    fig.tight_layout();fig.savefig(output/'sampling.png', dpi=140);plt.close(fig)
+
+
+def trajectory(evidence, output):
+    """Render retained cloud epoch summaries; never reselect or load a model."""
+    import numpy as np
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    with (evidence/'trajectory.csv').open(encoding='utf-8', newline='') as stream:
+        rows = list(csv.DictReader(stream))
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True)
+    fields = [('ped_ap50_95','Pedestrian AP50:95'), ('ped_ap75','Pedestrian AP75'),
+              ('ped_recall','Pedestrian recall | required precision'),
+              ('union_recall50','Small/thin union recall | required precision')]
+    colors = {'R':'#2878b5','S':'#d55e00'}
+    for arm in ('R','S'):
+        data = sorted([r for r in rows if r['arm']==arm], key=lambda r:int(r['epoch']))
+        x = [int(r['epoch']) for r in data]
+        selected = [r for r in data if r['cloud_selected_diagnostic'].lower()=='true']
+        for ax, (field,title) in zip(axes.flat,fields):
+            y = [100*float(r[field]) if r[field] else np.nan for r in data]
+            ax.plot(x,y,color=colors[arm],label=arm,linewidth=1.4)
+            for r in selected:
+                if r[field]:ax.scatter(int(r['epoch']),100*float(r[field]),s=45,marker='D',
+                    color=colors[arm],zorder=4,label=f"{arm} diagnostic {r['epoch']}")
+            ax.set(title=title,ylabel='Percent',xlabel='Epoch')
+    off = [int(r['epoch']) for r in rows if r['mosaic_off'].lower()=='true']
+    for ax in axes.flat:
+        if off:ax.axvline(min(off),color='#777777',linestyle='--',linewidth=1,label='Mosaic off')
+        ax.grid(alpha=.2);ax.spines[['top','right']].set_visible(False)
+    axes.flat[0].legend(fontsize=8)
+    fig.suptitle('Original 100-epoch cloud dev records | epochs are correlated, not independent repeats')
+    fig.tight_layout();output.mkdir(parents=True,exist_ok=True)
+    fig.savefig(output/'trajectory.png',dpi=140);plt.close(fig)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run', type=Path, default=Path('runs/a_001'))
     parser.add_argument('--output', type=Path)
     parser.add_argument('--evaluation', type=Path, help='Fixed-checkpoint train/dev comparison directory')
     parser.add_argument('--diagnostic', type=Path, help='Retained fixed-checkpoint diagnostic evidence')
+    parser.add_argument('--source-pair', type=Path, help='Retained S3 comparison.json and sampling.csv directory')
+    parser.add_argument('--trajectory', type=Path, help='Offline S3 trajectory.csv directory')
     args = parser.parse_args()
-    if args.diagnostic:
+    if args.trajectory:
+        trajectory(args.trajectory.resolve(), args.output or Path('plots') / args.trajectory.name)
+    elif args.source_pair:
+        source_pair(args.source_pair.resolve(), args.output or Path('plots') / args.source_pair.name)
+    elif args.diagnostic:
         diagnostic(args.diagnostic.resolve(), args.output or Path('plots') / args.diagnostic.name)
     elif args.evaluation:
         comparison(args.evaluation.resolve(), args.output or Path('plots') / args.evaluation.name)

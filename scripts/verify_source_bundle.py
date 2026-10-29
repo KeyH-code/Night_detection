@@ -8,6 +8,14 @@ from source_contract import ContractError, check_equal, read_json, safe_path, sh
 
 def verify(root):
     manifest = read_json(root / 'PACKAGE_MANIFEST.json')
+    required = {'scripts/'+n for n in ('source_policy.py', 'source_sampling.py', 'detection_metrics.py',
+                'train_monitor.py', 'evaluate.py', 'source_trainer.py', 'train_source.py')}
+    required |= {'configs/source_s3.yaml', 'RULES.md', 'specs/s3/plan.md',
+                 'runs/a_001/train/best_dev_metrics.json', 'runs/a_001/train/args.yaml', 'runs/a_001_diag/dev/metrics.json', 'runs/a_001_diag/slices.csv'}
+    if not required <= set(manifest['files']):
+        raise ContractError('Training package lacks required evaluation/policy dependencies')
+    if any('diagnostic_review' in name or name.startswith('scripts/diagnose') for name in manifest['files']):
+        raise ContractError('Local review UI is not a training package dependency')
     for name, entry in manifest['files'].items():
         path = safe_path(root, name)
         check_equal(path, entry['sha256'], sha256(path))

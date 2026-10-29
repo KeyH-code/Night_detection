@@ -80,3 +80,31 @@ def test_supplemental_gate_code_is_in_full_identity(identity_tree):
     (identity_tree/'scripts/source_resources.py').write_bytes(b'changed resource gate')
     after = runtime_identity(identity_tree)
     assert after['identity_sha256'] != before['identity_sha256']
+
+
+def test_s3_runtime_is_new_and_binds_arm_seed_helpers_rules_and_environment(tmp_path, monkeypatch):
+    import shutil
+    import source_cloud_gate as gate
+    from source_contract import sha256, write_json
+    root = Path(__file__).resolve().parents[2]
+    code = ('source_contract.py','source_trainer.py','train_source.py','evaluate.py','detection_metrics.py',
+            'train_monitor.py','source_sampling.py','source_policy.py','source_resources.py','source_cloud_gate.py',
+            'run_source_cloud_job.py','source_release.py','bundle_source.py','verify_source_bundle.py')
+    paths = ['scripts/'+n for n in code]+['configs/source_s3.yaml','RULES.md','specs/s3/plan.md',
+        'runs/a_001/train/args.yaml','runs/a_001/train/best_dev_metrics.json',
+        'runs/a_001_diag/dev/metrics.json','runs/a_001_diag/slices.csv','environment/requirements-linux.lock']
+    for rel in paths:
+        target = tmp_path/rel; target.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(root/rel,target)
+    write_json(tmp_path/'data/source_v1/READY.json', {'synthetic_identity_only':True})
+    weight = tmp_path/'weights/yolo11m.pt'; weight.parent.mkdir(); weight.write_bytes(b'synthetic official weight fixture')
+    monkeypatch.setattr(gate,'READY',sha256(tmp_path/'data/source_v1/READY.json'))
+    monkeypatch.setattr(gate,'PRETRAINED',sha256(weight))
+    r = gate.runtime_identity(tmp_path,tmp_path/'configs/source_s3.yaml','R',17)
+    s = gate.runtime_identity(tmp_path,tmp_path/'configs/source_s3.yaml','S',17)
+    repeat = gate.runtime_identity(tmp_path,tmp_path/'configs/source_s3.yaml','R',29)
+    assert r['experiment'] == 'source_s3' and r['schema_version'] == 3
+    assert len({i['identity_sha256'] for i in (r,s,repeat)}) == 3
+    assert r == gate.runtime_identity(tmp_path,tmp_path/'configs/source_s3.yaml','R',17)
+    (tmp_path/'scripts/source_sampling.py').write_text('changed fixture',encoding='utf-8')
+    assert r['identity_sha256'] != gate.runtime_identity(tmp_path,tmp_path/'configs/source_s3.yaml','R',17)['identity_sha256']

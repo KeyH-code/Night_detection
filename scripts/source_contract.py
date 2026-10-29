@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 NAMES = ['pedestrian', 'cyclist', 'car', 'truck', 'tram', 'tricycle']
 PURPOSES = ('source_train', 'source_dev')
 NORMALIZATION = 'clip_xyxy_to_image_bounds_v1'
+S3_EVALUATION = 'dev_only_local_final_v1'
 
 
 class ContractError(ValueError):

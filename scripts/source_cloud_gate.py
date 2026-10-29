@@ -34,7 +34,47 @@ def resource_rejections(resources, min_cpus=8, min_ram_bytes=30*1024**3):
     return reasons
 
 
-def runtime_identity(root=ROOT):
+def runtime_identity(root=ROOT, config_path=None, arm='R', seed=17):
+    config_path = Path(config_path) if config_path else root/'configs/source_a.yaml'
+    if config_path.name == 'source_s3.yaml':
+        import importlib.metadata as metadata
+        import platform
+        import yaml
+        from train_source import config_at
+        config = config_at(config_path)
+        check_equal('new runtime experiment', 'source_s3', config['experiment'])
+        if arm not in ('R', 'S') or seed not in (17, 29, 43):
+            raise ContractError('Unregistered runtime arm/seed')
+        config['sampling']['arm'], config['training']['seed'] = arm, seed
+        ready = root/'data/source_v1/READY.json'
+        if not ready.exists():
+            ready = root/'data/soda10m/splits/source_v1/READY.json'
+        check_equal('S3 frozen READY', READY, sha256(ready))
+        check_equal('S3 official pretrained', PRETRAINED, sha256(root/'weights/yolo11m.pt'))
+        code_names = ('source_contract.py', 'source_trainer.py', 'train_source.py', 'evaluate.py',
+                      'detection_metrics.py', 'train_monitor.py', 'source_sampling.py', 'source_policy.py',
+                      'source_resources.py', 'source_cloud_gate.py', 'run_source_cloud_job.py',
+                      'source_release.py', 'bundle_source.py', 'verify_source_bundle.py')
+        paths = ['scripts/'+n for n in code_names]+['RULES.md', 'specs/s3/plan.md', 'runs/a_001/train/args.yaml',
+                 'runs/a_001/train/best_dev_metrics.json', 'runs/a_001_diag/dev/metrics.json',
+                 'runs/a_001_diag/slices.csv', 'environment/requirements-linux.lock']
+        packages = {name: metadata.version(name) for name in config['environment'] if name != 'python'}
+        check_equal('S3 runtime Python', config['environment']['python'], '.'.join(platform.python_version_tuple()[:2]))
+        for name, version in packages.items():
+            check_equal('S3 runtime '+name, config['environment'][name], version)
+        # Pin implementation bytes as well as package versions.
+        distribution = Path(metadata.distribution('ultralytics').locate_file(''))
+        library = {rel: sha256(distribution/rel) for rel in (
+            'ultralytics/engine/trainer.py', 'ultralytics/engine/validator.py',
+            'ultralytics/data/augment.py', 'ultralytics/data/base.py', 'ultralytics/data/build.py',
+            'ultralytics/data/dataset.py', 'ultralytics/utils/nms.py', 'ultralytics/utils/metrics.py')}
+        body = {'schema_version': 3, 'experiment': 'source_s3', 'source_ready_sha256': READY,
+                'config_file_sha256': sha256(config_path), 'resolved_config_sha256': canonical_hash(config),
+                'arm': arm, 'seed': seed, 'pretrained_sha256': PRETRAINED,
+                'code_identity': {p: sha256(root/p) for p in paths}, 'packages': packages,
+                'platform': platform.system(), 'machine': platform.machine(),
+                'library_code': library, 'training_recipe_changed': True, 'frozen_data_changed': False}
+        return {**body, 'identity_sha256': canonical_hash(body)}
     for rel, expected in BASE_CODE.items():
         check_equal('v2 baseline ' + rel, expected, sha256(root/rel))
     ready = root/'data/source_v1/READY.json'
@@ -61,11 +101,16 @@ def main():
     p.add_argument('--enforce', action='store_true')
     p.add_argument('--expected-identity-sha256')
     p.add_argument('--identity-output', type=Path)
+    p.add_argument('--config', type=Path)
+    p.add_argument('--arm', choices=['R', 'S'], default='R')
+    p.add_argument('--seed', type=int, choices=[17, 29, 43], default=17)
     args = p.parse_args()
     host_memory = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') if hasattr(os, 'sysconf') else 0
     resources = snapshot(os.cpu_count(), host_memory)
     reasons = resource_rejections(resources)
-    identity = runtime_identity(args.root.resolve())
+    identity = runtime_identity(args.root.resolve(), args.config, args.arm, args.seed)
+    if identity.get('experiment') == 'source_s3' and identity['platform'] != 'Linux':
+        reasons.append('S3 cloud preflight requires Linux')
     if args.expected_identity_sha256:
         check_equal('cloud runtime identity', args.expected_identity_sha256, identity['identity_sha256'])
     state = {'status': 'passed' if not reasons else 'rejected', 'resources': resources,

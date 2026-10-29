@@ -11,10 +11,11 @@ from source_contract import (ContractError, canonical_hash, check_equal, read_js
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def build(root, ready_hash, output, smoke_path=None):
+def build(root, ready_hash, output, smoke_path=None, config_path=None):
     contract = verify_source(root, ready_hash)
     from train_source import code_identity, config_at
-    config = config_at(ROOT / 'configs/source_a.yaml')
+    config_path = (config_path or ROOT/'configs/source_a.yaml').resolve()
+    config = config_at(config_path)
     if smoke_path:
         smoke = read_json(smoke_path)
         check_equal('smoke.ready_sha256', ready_hash, smoke['identity']['ready_sha256'])
@@ -29,10 +30,13 @@ def build(root, ready_hash, output, smoke_path=None):
     code_files = ['source_contract.py', 'source_trainer.py', 'train_source.py',
                   'bundle_source.py', 'verify_source_bundle.py', 'source_release.py',
                   'source_cloud_gate.py', 'source_resources.py', 'run_source_cloud_job.py',
-                  'evaluate.py', 'train_monitor.py']
+                  'evaluate.py', 'train_monitor.py', 'detection_metrics.py',
+                  'source_sampling.py', 'source_policy.py']
     for name in code_files:
         paths['scripts/' + name] = ROOT / 'scripts' / name
-    for relative in ['configs/source_a.yaml', 'environment/training.in',
+    for relative in ['configs/source_a.yaml', 'configs/source_s3.yaml', 'RULES.md', 'specs/s3/plan.md',
+                     'runs/a_001/train/best_dev_metrics.json', 'runs/a_001/train/args.yaml', 'runs/a_001_diag/dev/metrics.json',
+                     'runs/a_001_diag/slices.csv', 'environment/training.in',
                      'environment/requirements-linux.lock', 'environment/requirements-windows.lock',
                      'environment/setup-linux.sh', 'environment/setup-windows.ps1',
                      'environment/README.md', 'configs/README.md',
@@ -48,6 +52,8 @@ def build(root, ready_hash, output, smoke_path=None):
                 'ready_sha256': ready_hash, 'data_fingerprint': ready['data_fingerprint'],
                 'counts': {p: ready['counts'][p] for p in ('source_train', 'source_dev')},
                 'smoke_formal_A': False, 'formal_A_completed': False,
+                'active_config': config_path.relative_to(ROOT).as_posix(),
+                'config_sha256': canonical_hash(config),
                 'files': {name: {'sha256': sha256(path), 'bytes': path.stat().st_size}
                           for name, path in sorted(paths.items())}}
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -79,5 +85,6 @@ if __name__ == '__main__':
     p.add_argument('--ready-sha256', required=True)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--smoke', type=Path, help='Optional current smoke receipt; never a fixed historical path')
+    p.add_argument('--config', type=Path)
     a = p.parse_args()
-    build(a.data_root, a.ready_sha256, a.output, a.smoke)
+    build(a.data_root, a.ready_sha256, a.output, a.smoke, a.config)

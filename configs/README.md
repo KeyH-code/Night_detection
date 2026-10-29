@@ -11,10 +11,18 @@
 
 后续A候选的六类质量、保护、证据、选模与停止标准统一见[规则](../RULES.md)，阶段安排见[计划](../plan.md)。本文不重复阈值。
 
-当前`source_a.yaml`和活动训练入口仍使用原来的两主类宏平均严格提升选模及100轮/patience20配方。新增规则尚未实现为六类资格筛选、受约束PR工作点或有意义改进的早停逻辑；S3必须先完成实现/验证、新身份与云预检，再按实际安排训练。本文发布不修改YAML、原A代码快照或任何权重。
+`source_a.yaml`继续保留旧主类宏平均/旧patience路径。`source_s3.yaml`为已审采样对照的新配置：显式锁定原A梯度配方，arm=R/S、seed=17/29/43分别进入身份；只允许2:1、4000槽位、batch16/workers4、100轮、horizon_only。六类资格与证据筛查后选best；无合格时独立保留diagnostic，不自动冻结。规则直接解析RULES.md，不在配置重复门槛。
 
-## 观察
+## source_a兼容观察
 
 monitor.enabled=true、every=1表示以后preflight/formal每轮额外对完整source_train的当轮EMA做无增强AP/P/R评价；batch16、workers0仅用于这个独立评价加载器，梯度训练仍batch16/workers4。原生train/val loss每轮已记录，不需补造。train_metrics.csv含六类AP50/AP50:95/P/R、同轮dev AP及耗时；train_monitor.json绑定身份。观察只写日志，不参与best/早停，不更新参数；不静默改抽样或频率。
 
 当前活动配置增加了观察，原A当时的配置仍以runs/a_001/code快照为准；云端必须为新代码/配置重做预检与配方冻结，将评价的真实时间计入预算。当前没有启动新训练。
+
+## S3
+
+训练入口以`--config configs/source_s3.yaml --arm R --seed 17`显式选择；相同seed两臂除采样以外的训练参数一致，CLI不能静默改强度、批量或日程。checkpoint_period=0表示只保留有效角色与last；其他原梯度参数逐键对照原始args.yaml，差异拒绝启动。
+
+S3当前profile=dev_only_local_final_v1：每轮仅完整500 dev，batch1/workers0、FP16及S2锁定的匹配/PR口径；4000 train观察和最终导出移到本地，使用保存的云端dev阈值，不逐轮做train推理。AMP初始缩放固定1（1024在S预检第26批出现溢出），后续GradScaler状态随checkpoint恢复；两臂一致。默认F1指标单独保留。preflight为100轮日程下完成2轮后停止，使用完整数据，不是把epochs改成2。S3不使用小样本smoke或OOM自动降批量；失败预检从COCO重启，formal完整轮checkpoint可恢复。
+
+新云端调用仍经run_source_cloud_job.py；各arm/seed须新runtime身份与完整预检收据，旧A凭证、其他臂/seed或缺完整观察均拒绝。用户已授权新安排并自行停机；当前完成本机改造，待用户重开机再按新身份预检。旧全train观察收据不可复用。

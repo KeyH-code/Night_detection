@@ -27,6 +27,7 @@ from evaluate import metric_record, stage_subset, validator_args
 from source_contract import (ContractError, NAMES, canonical_hash, check_equal, read_json,
                              safe_path, select_records, sha256, verify_source, write_json)
 import detection_metrics as dm
+import diagnostic_review as dr
 
 ROOT = Path(__file__).resolve().parents[1]
 PURPOSES = ('source_train', 'source_dev')
@@ -34,21 +35,7 @@ READY_SHA = '72e75ebd99014c830e0227061e390e6aed768ae724b532a5c2c90fd8dec93e85'
 BEST_SHA = '9db1ad388d28ecf3d912feb8e686056d497acde705197a5156a320579dc18bd7'
 
 
-def load_rules(path):
-    text = Path(path).read_text(encoding='utf-8')
-    rows = {}
-    for name, ap, ap50, p, r in re.findall(
-            r'\|\s*(pedestrian|cyclist|car|truck|tram|tricycle)\s*\|\s*([\d.]+)%\s*\|\s*([\d.]+)%\s*\|\s*P≥([\d.]+)%，R≥([\d.]+)%', text):
-        if name in rows:
-            raise ContractError(f'Duplicate rule row: {name}')
-        rows[name] = dict(zip(('ap50_95', 'ap50', 'precision', 'recall'), [float(x)/100 for x in (ap, ap50, p, r)]))
-    check_equal('six RULES rows', set(NAMES), set(rows))
-    protection = re.search(r'回退不得超过([\d.]+)个百分点', text)
-    precision = re.search(r'区间总宽≤([\d.]+)个百分点', text)
-    if not protection or not precision:
-        raise ContractError('Missing protection/evidence rule; do not use an implicit fallback')
-    return {'sha256': sha256(Path(path)), 'classes': rows,
-            'protection_drop': float(protection[1])/100, 'recall_ci_width': float(precision[1])/100}
+from source_policy import load_rules
 
 
 def isolate(scratch):
@@ -103,85 +90,13 @@ def environment():
                              sha256(Path(m.__file__)) for m in (validator, val, metrics, nms)}}
 
 
-def original_gt(record, root):
-    rows = []
-    for line in safe_path(root, record['label']).read_text(encoding='utf-8').splitlines():
-        c, x, y, w, h = map(float, line.split())
-        rows.append((int(c), [(x-w/2)*record['width'], (y-h/2)*record['height'],
-                              (x+w/2)*record['width'], (y+h/2)*record['height']]))
-    return rows
-
-
-def pack_image(pred, pbatch, record, root, iou_thresholds):
-    import torch
-    from ultralytics.utils import ops
-    from ultralytics.utils.metrics import box_iou
-    gt = original_gt(record, root)
-    check_equal('GT row count ' + record['key'], len(gt), len(pbatch['cls']))
-    check_equal('GT row classes ' + record['key'], [x[0] for x in gt], pbatch['cls'].int().cpu().tolist())
-    gt_orig = ops.scale_boxes(pbatch['imgsz'], pbatch['bboxes'].clone(), pbatch['ori_shape'], pbatch['ratio_pad'])
-    if len(gt) and np.max(np.abs(gt_orig.cpu().numpy()-np.array([v[1] for v in gt]))) > .01:
-        raise ContractError('GT coordinate/label row mismatch: ' + record['key'])
-    pred_orig = ops.scale_boxes(pbatch['imgsz'], pred['bboxes'].clone(), pbatch['ori_shape'], pbatch['ratio_pad'])
-    iou = box_iou(pbatch['bboxes'], pred['bboxes']).cpu().numpy()
-    g, p = np.nonzero(iou)
-    row = {k: record[k] for k in ('key', 'purpose', 'group_id', 'image', 'label', 'image_sha256', 'label_sha256', 'width', 'height')}
-    row.update(input_shape=list(pbatch['imgsz']), ratio_pad=pbatch['ratio_pad'],
-               iou_thresholds=list(iou_thresholds),
-               gt={'ids': list(range(len(gt))), 'cls': [x[0] for x in gt],
-                   'boxes': pbatch['bboxes'].float().cpu().tolist(), 'original_boxes': [x[1] for x in gt]},
-               pred={'ids': list(range(len(pred['cls']))), 'cls': pred['cls'].int().cpu().tolist(),
-                     'conf': pred['conf'].float().cpu().tolist(), 'boxes': pred['bboxes'].float().cpu().tolist(),
-                     'original_boxes': pred_orig.float().cpu().tolist()},
-               iou_edges=[[int(a), int(b), float(iou[a, b])] for a, b in zip(g, p)])
-    flags, pairs = dm.ap_flags(row)
-    row.update(ap_tp=flags.tolist(), ap_pairs=pairs)
-    return row
+# Reusable export/matcher belongs to evaluate; review/trace tools remain local-only.
+from evaluate import original_gt, pack_image
 
 
 def validator_class():
-    from ultralytics.models.yolo.detect import DetectionValidator
-    from ultralytics.utils import nms
-
-    class EvidenceValidator(DetectionValidator):
-        def __init__(self, *args, records, source_root, stream, trace_context=None, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.records_by_name = {Path(r['image']).name: r for r in records}
-            check_equal('unique image stems', len(records), len(self.records_by_name))
-            self.source_root, self.stream = source_root, stream
-            self.rows, self.keys, self.capture = [], set(), None
-            self.trace_context, self.traces = trace_context, []
-
-        def postprocess(self, preds):
-            raw = preds[0] if isinstance(preds, (tuple, list)) else preds
-            self.capture = raw.clone() if self.trace_context else None
-            self.candidate_counts = (raw[:, 4:4+self.nc] > self.args.conf).sum((1, 2)).cpu().tolist()
-            return super().postprocess(preds)
-
-        def update_metrics(self, preds, batch):
-            for i, pred in enumerate(preds):
-                pbatch = self._prepare_batch(i, batch)
-                rec = self.records_by_name[Path(pbatch['im_file']).name]
-                if rec['key'] in self.keys:
-                    raise ContractError('Duplicate emitted image key')
-                self.keys.add(rec['key'])
-                row = pack_image(pred, pbatch, rec, self.source_root, self.iouv.cpu().tolist())
-                native = self._process_batch(pred, pbatch)['tp']
-                if not np.array_equal(native, np.asarray(row['ap_tp'], dtype=bool).reshape(-1, 10)):
-                    raise ContractError('Offline/native per-image TP mismatch: ' + rec['key'])
-                row['nms_audit'] = {'expanded_above_floor': self.candidate_counts[i],
-                                    'max_nms': 30000, 'pre_nms_truncated': self.candidate_counts[i] > 30000,
-                                    'final_count': len(pred['cls']), 'at_max_det': len(pred['cls']) == self.args.max_det,
-                                    'backend': 'torchvision' if 'torchvision' in sys.modules else 'TorchNMS'}
-                if self.trace_context:
-                    self.traces.append(trace_image(self.capture[i], row, *self.trace_context))
-                self.rows.append(row)
-                if self.stream:
-                    self.stream.write(json.dumps(row, ensure_ascii=False, separators=(',', ':'), allow_nan=False)+'\n')
-            self.capture = None
-            super().update_metrics(preds, batch)
-
-    return EvidenceValidator
+    from evaluate import evidence_validator_class
+    return evidence_validator_class(trace_fn=trace_image)
 
 
 def run_validator(contract, weights, scratch, evidence=True, stream=None, trace_context=None):
@@ -208,9 +123,10 @@ def run_validator(contract, weights, scratch, evidence=True, stream=None, trace_
 
 
 def snapshot_code(output):
-    sources = ['scripts/diagnose.py', 'scripts/detection_metrics.py', 'scripts/evaluate.py',
+    sources = ['scripts/diagnose.py', 'scripts/detection_metrics.py', 'scripts/diagnostic_review.py', 'scripts/evaluate.py', 'scripts/source_policy.py',
                'scripts/source_contract.py', 'scripts/plot.py', 'tests/train/diagnose/test_diagnose.py',
-               'tests/train/diagnose/test_detection_metrics.py', 'environment/requirements-windows.lock']
+               'tests/train/diagnose/test_detection_metrics.py', 'tests/train/diagnose/test_review.py',
+               'environment/requirements-windows.lock']
     identity = {}
     for rel in sources:
         source = ROOT / rel
@@ -321,7 +237,11 @@ def verify_collected(output):
 def bind_stage(output, run, stage):
     """Bind actual postprocessing code separately without rewriting collection snapshots."""
     references = {}
-    for relative, original_hash in run['identity']['code'].items():
+    sources = dict(run['identity']['code'])
+    sources.setdefault('scripts/diagnostic_review.py', None)
+    sources.setdefault('scripts/source_policy.py', None)
+    sources.setdefault('tests/train/diagnose/test_review.py', None)
+    for relative, original_hash in sources.items():
         source = ROOT/relative
         digest = sha256(source)
         if digest == original_hash:
@@ -778,26 +698,37 @@ def import_review(args):
     check_equal('review READY', run['ready_sha256'], submitted['ready_sha256'])
     cases = read_cases(output); lookup = {c['case_id']: c for c in cases}
     check_equal('review queue identity', review_identity(output, run, cases), submitted['review_identity'])
+    dr.validate_bundle(submitted, {'checkpoint_sha256': run['checkpoint_sha256'],
+                       'ready_sha256': run['ready_sha256'],
+                       'review_identity': review_identity(output, run, cases)}, set(lookup), allow_pending=True)
     seen = set()
     for entry in submitted['judgments']:
         cid = entry['case_id']
         if cid in seen or cid not in lookup: raise ContractError('Duplicate/unknown review case')
         seen.add(cid)
-        if entry['decision'] not in ('correct_detection', 'true_error', 'annotation_suspect', 'uncertain'):
-            raise ContractError('Invalid review decision')
         if not entry.get('reviewer', '').strip(): raise ContractError('Reviewer is required')
         target = lookup[cid]
-        if target['status'] == 'reviewed' and any(target.get(k) != entry.get(k) for k in ('decision', 'reviewer', 'note')):
+        if target['status'] == 'reviewed' and entry.get('decision') in dr.DECISIONS and target['decision'] != entry['decision']:
             raise ContractError('Conflicting existing review; explicit reconciliation required')
-        target.update(status='reviewed', decision=entry['decision'], reviewer=entry['reviewer'], note=entry.get('note', ''))
+        previous = {k: target.get(k) for k in ('case_id', 'decision', 'reviewer', 'note')}
+        if target.get('note_history'): previous['note_history'] = target['note_history']
+        merged = dr.merge_feedback(previous, entry)
+        target.update(merged, status='reviewed' if merged.get('decision') in dr.DECISIONS else 'pending')
     with (output/'cases.jsonl').open('w', encoding='utf-8') as stream:
         for case in cases: stream.write(json.dumps(case, ensure_ascii=False)+'\n')
     complete = sum(c['status'] == 'reviewed' for c in cases)
     previous = read_json(output/'review.json') if (output/'review.json').exists() else {}
     review_status = dict(previous, status='reviewed' if complete == len(cases) else 'pending_human_review',
                          items=len(cases), completed=complete,
+                         feedback_items=sum(bool(c.get('note') or c.get('note_history')) for c in cases),
                          decisions=dict(Counter(c['decision'] for c in cases if c['status'] == 'reviewed')),
                          layers=dict(Counter(layer for c in cases for layer in c['layers'])))
+    if previous.get('audit'):
+        review_status['audit_summary'] = dr.audit_summary(cases, previous['audit'])
+        review_status['status'] = ('audit_ready_for_acceptance' if review_status['audit_summary']['coverage_complete']
+                                  else 'pending_human_audit')
+    if previous.get('user_assessment', {}).get('agent_review_usable'):
+        review_status['status'] = 'agent_review_adopted'
     write_json(output/'review.json', review_status)
     return review_status
 
@@ -835,53 +766,94 @@ def import_initial(args):
     return status
 
 
+def audit(args):
+    """Register the user-requested Agent-led review protocol; never mark cases human-reviewed."""
+    output = args.output.resolve()
+    run, _ = verify_collected(output)
+    cases = read_cases(output)
+    plan = dr.audit_plan(cases, review_identity(output, run, cases))
+    status = read_json(output/'review.json')
+    if status.get('audit'):
+        check_equal('existing audit selection', plan, status['audit'])
+    status.update(audit=plan, audit_summary=dr.audit_summary(cases, plan),
+                  status='agent_review_adopted' if status.get('user_assessment', {}).get('agent_review_usable')
+                  else 'pending_human_audit')
+    write_json(output/'review.json', status)
+    run.update(visual_review_mode='agent_primary_selective_human_review'
+               if status.get('user_assessment', {}).get('agent_review_usable') else 'agent_primary_human_audit',
+               human_review_complete=False,
+               human_audit_complete=False, status='awaiting_review')
+    write_json(output/'run.json', run)
+    bind_stage(output, run, 'review')
+    return {'audit_cases': len(plan['case_ids']), 'mandatory_cases': plan['mandatory_count'],
+            'status': status['status']}
+
+
 def review(args):
     """Simple localhost viewer. Browser judgments export to JSON, never silently label data."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, urlparse
+    from threading import Lock
     scratch = isolate(args.scratch)
     output = args.output.resolve()
     run, _ = verify_collected(output)
     rows = {r['key']: r for stem in ('train', 'dev') for r in dm.read_rows(output/stem/'objects.jsonl.gz')}
     cases = read_cases(output)
+    status = read_json(output/'review.json')
+    if not status.get('audit'): raise ContractError('Register the human audit with mode audit first')
+    expected_plan = dr.audit_plan(cases, review_identity(output, run, cases))
+    check_equal('current audit identity', expected_plan, status['audit'])
+    case_keys = {c['key'] for c in cases}
+    rows = {key: row for key, row in rows.items() if key in case_keys}
     traces = {r['key']: r for r in dm.read_rows(output/'trace.jsonl.gz')} if (output/'trace.jsonl.gz').exists() else {}
+    gt_ids = defaultdict(set)
+    for c in cases:
+        if c['object'] == 'gt': gt_ids[c['key']].add(c['index'])
+    traces = {key: {'baseline_exact': t['baseline_exact'],
+                    'gt_evidence': [g for g in t['gt_evidence'] if g['gt_id'] in gt_ids[key]]}
+              for key, t in traces.items() if key in gt_ids}
+    matches = {m['key']: m for stem in ('train', 'dev')
+               for m in dm.read_rows(output/stem/'matches.jsonl.gz') if m['key'] in case_keys}
+    facts = {}
+    for c in cases:
+        if c['object'] == 'gt':
+            matched = any(g == c['index'] for g, _ in matches[c['key']]['classes'][c['class']]['pairs'])
+            fact = '工作点记录：已正确匹配该标注目标' if matched else '工作点记录：未正确匹配该标注目标（漏检）'
+        elif rows[c['key']]['pred']['conf'][c['index']] < c['threshold']:
+            fact = '低于使用阈值：仅作诊断候选，不是实际工作点误报'
+        else:
+            fact = '达到使用阈值：按冻结标注记为工作点误报候选'
+        facts[c['case_id']] = fact
     payload = {'checkpoint_sha256': run['checkpoint_sha256'], 'ready_sha256': run['ready_sha256'],
                'review_identity': review_identity(output, run, cases),
                'cases': cases, 'rows': rows, 'traces': traces,
-               'workpoints': read_json(output/'workpoints.json')}
-    page = '''<!doctype html><meta charset="utf-8"><title>S2 审核</title>
-<style>body{font:16px sans-serif;margin:16px}button,input,select{font:inherit;margin:4px}canvas{max-width:100%;border:1px solid #999}pre{white-space:pre-wrap}</style>
-<h2>固定 A best：source train/dev 诊断复审</h2><p>绿框GT，红框预测，黄色粗框为当前目标。类别ID：0行人、1骑行者、2汽车、3卡车、4 tram（沿用官方语义）、5三轮车。分数显示到小数点后三位，实际判断使用完整分数。Agent初审仅作参考，人工结论不会自动代填；全部图片均为source白天用途。</p>
-<label>层 <select id="layer"></select></label><label>状态 <select id="filter"><option value="all">全部</option><option value="pending">未审</option></select></label>
-<label>Agent初审 <select id="initialFilter"><option value="">全部</option><option value="uncertain">无法判定</option><option value="annotation_suspect">标注疑点</option><option value="true_error">检测错误</option><option value="correct_detection">正常对照</option></select></label>
-<button id="prev">上一项</button><button id="next">下一项</button><input id="jump" type="number" min="1" style="width:90px"><button id="go">跳转</button><span id="position"></span>
-<p><label><input id="gt" type="checkbox" checked>GT</label><label><input id="pred" type="checkbox" checked>全部预测</label><label><input id="wp" type="checkbox" checked>仅工作点预测</label><label><input id="cand" type="checkbox">中间候选/抑制框</label><label><input id="crop" type="checkbox" checked>局部放大</label></p>
-<p id="initialSummary"></p><label>审核者<input id="reviewer"></label>
-<select id="decision"><option value="">请选择结论</option><option value="correct_detection">正确检出/正常对照</option><option value="true_error">确认检测错误</option><option value="annotation_suspect">标注/类别疑点</option><option value="uncertain">无法判定</option></select><input id="note" placeholder="判断依据、疑点或限制" style="width:50%"><button id="save">保存本项到浏览器</button><button id="export">导出判断JSON</button>
-<p><canvas id="canvas"></canvas></p><details><summary>证据详情：图/框ID、IoU及候选链</summary><pre id="info"></pre></details>
-<script>
-let data, indices=[], cursor=0, img=new Image(), answers={},storage; const $=id=>document.getElementById(id);
-function select(){const layer=$('layer').value;indices=data.cases.map((c,i)=>i).filter(i=>(!layer||data.cases[i].layers.includes(layer))&&($('filter').value!=='pending'||!answers[data.cases[i].case_id])&&(!$('initialFilter').value||data.cases[i].initial_review?.decision===$('initialFilter').value));cursor=0;show()}
-function current(){return data.cases[indices[cursor]]}
-function traceFor(c){const tr=data.traces[c.key];return tr&&c.object==='gt'?tr.gt_evidence.find(e=>e.gt_id===c.index):null}
-function show(){if(!indices.length){$('info').textContent='此筛选下没有项目';$('initialSummary').textContent='此筛选下没有项目';return}const c=current(),r=data.rows[c.key],a=answers[c.case_id]||{};$('position').textContent=`${cursor+1}/${indices.length} 已保存${Object.keys(answers).length}/${data.cases.length}`;$('jump').value=cursor+1;const labels={true_error:'检测错误初判',correct_detection:'正常对照初判',annotation_suspect:'标注疑点',uncertain:'无法判定'};const initial=c.initial_review;$('initialSummary').textContent=c.case_id+' | '+c.class+' | Agent初审：'+(initial?(labels[initial.decision]+' ('+initial.confidence+') — '+initial.note):'暂无');const adjacent=r.iou_edges.filter(e=>c.object==='gt'?e[0]===c.index:e[1]===c.index).sort((a,b)=>b[2]-a[2]).slice(0,12);$('info').textContent=JSON.stringify({case:c,full_score:c.object==='pred'?r.pred.conf[c.index]:null,nearby_gt_pred_iou:adjacent,trace:traceFor(c),trace_baseline_exact:data.traces[c.key]?.baseline_exact},null,2);$('decision').value=a.decision||'';$('note').value=a.note||'';img.onload=draw;img.src='/image?key='+encodeURIComponent(c.key)}
-function draw(){const c=current(),r=data.rows[c.key],ctx=$('canvas').getContext('2d');const box=r[c.object==='gt'?'gt':'pred'].original_boxes[c.index];let x=0,y=0,w=r.width,h=r.height;if($('crop').checked){const pad=Math.max(40,Math.max(box[2]-box[0],box[3]-box[1]));x=Math.max(0,box[0]-pad);y=Math.max(0,box[1]-pad);w=Math.min(r.width-x,box[2]-x+pad);h=Math.min(r.height-y,box[3]-y+pad)}const scale=Math.min(2,1500/w,850/h);$('canvas').width=w*scale;$('canvas').height=h*scale;ctx.drawImage(img,x,y,w,h,0,0,w*scale,h*scale);function rect(b,color,text,thick=1){ctx.strokeStyle=color;ctx.lineWidth=thick;ctx.strokeRect((b[0]-x)*scale,(b[1]-y)*scale,(b[2]-b[0])*scale,(b[3]-b[1])*scale);ctx.fillStyle=color;ctx.font='13px sans-serif';ctx.fillText(text,(b[0]-x)*scale,Math.max(14,(b[1]-y)*scale-3))}if($('gt').checked)r.gt.original_boxes.forEach((b,i)=>rect(b,'#0a0',`g${i} c${r.gt.cls[i]}`));if($('pred').checked)r.pred.original_boxes.forEach((b,i)=>{const names=['pedestrian','cyclist','car','truck','tram','tricycle'];const threshold=data.workpoints[names[r.pred.cls[i]]].threshold;if(!$('wp').checked||r.pred.conf[i]>=threshold)rect(b,'#e33',`p${i} c${r.pred.cls[i]} ${r.pred.conf[i].toFixed(3)}`)});const tr=traceFor(c);if($('cand').checked&&tr){for(const candidate of [tr.closest_geometry_candidate,tr.best_geometric_class_score_candidate])if(candidate)rect(candidate.box_original,'#00aaaa','candidate '+candidate.anchor,2);for(const chain of tr.suppression_chain_examples||[])rect(chain.suppressor_box_original,'#aa00aa','suppressor '+chain.suppressor_anchor,2)}rect(box,'#dd0',c.object+':'+c.index,4)}
-$('prev').onclick=()=>{cursor=Math.max(0,cursor-1);show()};$('next').onclick=()=>{cursor=Math.min(indices.length-1,cursor+1);show()};$('go').onclick=()=>{cursor=Math.max(0,Math.min(indices.length-1,Number($('jump').value)-1));show()};['gt','pred','wp','cand','crop'].forEach(id=>$(id).onchange=draw);$('layer').onchange=select;$('filter').onchange=select;$('initialFilter').onchange=select;
-$('save').onclick=()=>{if(!$('reviewer').value.trim()||!$('decision').value){alert('请填写审核者并选择结论');return}answers[current().case_id]={case_id:current().case_id,reviewer:$('reviewer').value.trim(),decision:$('decision').value,note:$('note').value};localStorage.setItem(storage,JSON.stringify(answers));cursor=Math.min(indices.length-1,cursor+1);show()};$('export').onclick=()=>{const result={phase:'human_review',checkpoint_sha256:data.checkpoint_sha256,ready_sha256:data.ready_sha256,review_identity:data.review_identity,judgments:Object.values(answers)};const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(result,null,2)],{type:'application/json'}));a.download='s2_review.json';a.click()};fetch('/data').then(r=>r.json()).then(x=>{data=x;storage='night_s2_'+data.review_identity;try{answers=JSON.parse(localStorage.getItem(storage)||'{}')}catch(e){answers={}}const layers=[...new Set(data.cases.flatMap(c=>c.layers))].sort();$('layer').innerHTML='<option value="">全部层</option>'+layers.map(x=>`<option>${x}</option>`).join('');select()});
-</script>'''
+               'workpoints': read_json(output/'workpoints.json'), 'names': list(NAMES),
+               'audit': status['audit'], 'facts': facts,
+               'user_assessment': status.get('user_assessment')}
+    identity = {k: payload[k] for k in ('checkpoint_sha256', 'ready_sha256', 'review_identity')}
+    draft = dr.DraftStore(scratch/'review_draft.json', identity, cases)
+    draft_lock = Lock()
+    page = dr.PAGE
     page_path = scratch/'review.html'
     page_path.write_text(page, encoding='utf-8')
     image_root = Path(run['data_root'])
     # No arbitrary file endpoint: only images referenced by verified exported rows.
     for row in rows.values():
         if row['purpose'] not in PURPOSES: raise ContractError('Forbidden review purpose')
-    data_bytes = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    payload_bytes = lambda: json.dumps(dict(payload, draft=draft.bundle()), ensure_ascii=False,
+                                      separators=(',', ':')).encode('utf-8')
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             parsed = urlparse(self.path)
             if parsed.path == '/': body, kind = page.encode('utf-8'), 'text/html; charset=utf-8'
-            elif parsed.path == '/data': body, kind = data_bytes, 'application/json; charset=utf-8'
+            elif parsed.path == '/data':
+                with draft_lock: body = payload_bytes()
+                kind = 'application/json; charset=utf-8'
+            elif parsed.path == '/draft':
+                with draft_lock:
+                    body = json.dumps(draft.bundle(), ensure_ascii=False).encode('utf-8')
+                kind = 'application/json; charset=utf-8'
             elif parsed.path == '/image':
                 key = parse_qs(parsed.query).get('key', [''])[0]
                 if key not in rows: self.send_error(404); return
@@ -890,11 +862,31 @@ $('save').onclick=()=>{if(!$('reviewer').value.trim()||!$('decision').value){ale
                 body, kind = path.read_bytes(), 'image/jpeg'
             else: self.send_error(404); return
             self.send_response(200); self.send_header('Content-Type', kind)
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+
+        def do_POST(self):
+            if self.path != '/draft': self.send_error(404); return
+            if self.headers.get('Origin') != f'http://127.0.0.1:{args.port}':
+                self.send_error(403); return
+            if self.headers.get('Content-Type') != 'application/json': self.send_error(415); return
+            try:
+                size = int(self.headers.get('Content-Length', '0'))
+                if not 0 < size <= 2_000_000: raise ContractError('Invalid draft size')
+                submitted = json.loads(self.rfile.read(size).decode('utf-8'))
+                with draft_lock: count = draft.save(submitted)
+            except (ContractError, ValueError, TypeError, KeyError) as exc:
+                self.send_error(400, str(exc)); return
+            body = json.dumps({'saved': count}).encode('utf-8')
+            self.send_response(200); self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
 
         def log_message(self, *_): pass
 
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
+    class ReviewServer(ThreadingHTTPServer):
+        allow_reuse_address = False
+
+    server = ReviewServer(('127.0.0.1', args.port), Handler)
     print(f'REVIEW http://127.0.0.1:{args.port}/ ; external page: {page_path}', flush=True)
     server.serve_forever()
 
@@ -905,10 +897,19 @@ def seal(args):
     bind_stage(output, run, 'delivery')
     status = read_json(output/'review.json')
     cases = read_cases(output)
+    summary = dr.audit_summary(cases, status['audit']) if status.get('audit') else None
     complete = bool(cases) and all(c['status'] == 'reviewed' and c.get('reviewer') and
                                    c.get('decision') in ('correct_detection', 'true_error', 'annotation_suspect', 'uncertain')
                                    for c in cases) and (output/'trace.jsonl.gz').is_file()
     run.update(status='complete' if complete else 'awaiting_review', human_review_complete=complete)
+    if summary is not None:
+        status.update(audit_summary=summary, status='audit_ready_for_acceptance' if summary['coverage_complete']
+                      else 'pending_human_audit')
+        if status.get('user_assessment', {}).get('agent_review_usable'):
+            status['status'] = 'agent_review_adopted'
+        write_json(output/'review.json', status)
+        run.update(human_audit_complete=summary['coverage_complete'],
+                   human_audit_needs_followup=summary['needs_followup'])
     write_json(output/'run.json', run)
     files = {}
     for path in sorted(output.rglob('*')):
@@ -922,7 +923,7 @@ def seal(args):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode', choices=['collect', 'analyze', 'trace', 'review', 'import-initial', 'import-review', 'seal'])
+    p.add_argument('mode', choices=['collect', 'analyze', 'trace', 'audit', 'review', 'import-initial', 'import-review', 'seal'])
     p.add_argument('--output', type=Path, default=ROOT/'runs/a_001_diag')
     p.add_argument('--scratch', type=Path, required=True, help='External task-owned scratch root')
     p.add_argument('--data-root', type=Path, default=ROOT/'data/soda10m/splits/source_v1')

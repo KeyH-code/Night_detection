@@ -90,6 +90,54 @@ def read_run(path):
     return json.loads((path/'run.json').read_text(encoding='utf-8'))
 
 
+def test_finished_sample_never_becomes_full_human_review_or_automatic_s2_acceptance(tmp_path, monkeypatch):
+    monkeypatch.setattr(d, 'verify_collected', lambda _: ({'checkpoint_sha256': 'a', 'ready_sha256': 'b'}, {}))
+    monkeypatch.setattr(d, 'bind_stage', lambda *_: None)
+    write_json(tmp_path/'review.json', {'audit': {'case_ids': ['sample']}})
+    rows = [{'case_id': 'sample', 'status': 'reviewed', 'reviewer': 'human', 'decision': 'true_error',
+             'initial_review': {'decision': 'true_error'}},
+            {'case_id': 'agent_only', 'status': 'pending', 'reviewer': None,
+             'initial_review': {'decision': 'uncertain'}}]
+    (tmp_path/'cases.jsonl').write_text(''.join(json.dumps(c)+'\n' for c in rows), encoding='utf-8')
+    (tmp_path/'trace.jsonl.gz').write_bytes(b'not used by this state test')
+    result = d.seal(SimpleNamespace(output=tmp_path))
+    assert result['status'] == 'awaiting_review'
+    assert result['review']['status'] == 'audit_ready_for_acceptance'
+    assert read_run(tmp_path)['human_audit_complete'] is True
+    assert read_run(tmp_path)['human_review_complete'] is False
+
+
+def test_import_retains_note_only_feedback_without_marking_it_reviewed(tmp_path, monkeypatch):
+    monkeypatch.setattr(d, 'verify_collected', lambda _: ({'checkpoint_sha256': 'a', 'ready_sha256': 'b'}, {}))
+    monkeypatch.setattr(d, 'review_identity', lambda *_: 'queue')
+    (tmp_path/'cases.jsonl').write_text(json.dumps({'case_id': 'known', 'status': 'pending',
+             'decision': None, 'reviewer': None, 'note': '', 'layers': []})+'\n', encoding='utf-8')
+    incoming = tmp_path/'incoming.json'
+    write_json(incoming, {'phase': 'human_review', 'checkpoint_sha256': 'a', 'ready_sha256': 'b',
+                         'review_identity': 'queue', 'judgments': [{'case_id': 'known', 'decision': None,
+                          'note': '未作结论，但这段观察必须保留', 'reviewer': 'human'}]})
+    result = d.import_review(SimpleNamespace(output=tmp_path, review_file=incoming))
+    record = d.read_cases(tmp_path)[0]
+    assert record['note'] == '未作结论，但这段观察必须保留'
+    assert record['status'] == 'pending' and result['completed'] == 0
+    assert result['feedback_items'] == 1
+
+
+def test_user_adoption_does_not_force_remaining_audit_or_claim_full_human_acceptance(tmp_path, monkeypatch):
+    monkeypatch.setattr(d, 'verify_collected', lambda _: ({'checkpoint_sha256': 'a', 'ready_sha256': 'b'}, {}))
+    monkeypatch.setattr(d, 'bind_stage', lambda *_: None)
+    write_json(tmp_path/'review.json', {'audit': {'case_ids': ['pending']},
+               'user_assessment': {'agent_review_usable': True}})
+    (tmp_path/'cases.jsonl').write_text(json.dumps({'case_id': 'pending', 'status': 'pending',
+                  'initial_review': {'decision': 'uncertain'}})+'\n', encoding='utf-8')
+    (tmp_path/'trace.jsonl.gz').write_bytes(b'not used by this state test')
+    result = d.seal(SimpleNamespace(output=tmp_path))
+    assert result['review']['status'] == 'agent_review_adopted'
+    assert result['status'] == 'awaiting_review'
+    assert result['review']['audit_summary']['pending'] == 1
+    assert read_run(tmp_path)['human_review_complete'] is False
+
+
 def test_tricycle_review_covers_gt_and_false_positives_on_negative_images():
     def item(key, gt, pred):
         row = {'key': key, 'purpose': 'source_dev', 'group_id': key, 'width': 100, 'height': 100,

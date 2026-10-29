@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.metadata
 import json
 import os
@@ -10,17 +11,20 @@ import shutil
 import subprocess
 import sys
 import time
+import tempfile
 import urllib.request
 from pathlib import Path
 
 from source_contract import (ContractError, NAMES, canonical_hash, check_equal, read_json,
-                             sha256, stage_dataset, verify_source, write_json)
+                             safe_path, sha256, stage_dataset, verify_source, write_json)
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def configure_paths():
-    cache = ROOT / '.cache' / 'training'
+    cache = Path(os.environ.get('NIGHT_SOURCE_SCRATCH', tempfile.gettempdir())) / 'night_source_runtime'
+    if cache.resolve().is_relative_to(ROOT):
+        raise ContractError('Runtime scratch must stay outside the project')
     for directory in ('tmp', 'pip', 'ultralytics', 'torch', 'matplotlib'):
         (cache / directory).mkdir(parents=True, exist_ok=True)
     for name, directory in {'TEMP': 'tmp', 'TMP': 'tmp', 'TMPDIR': 'tmp', 'PIP_CACHE_DIR': 'pip',
@@ -30,6 +34,7 @@ def configure_paths():
     os.environ['PYTHONUTF8'] = '1'
     os.environ['PYTHONIOENCODING'] = 'utf-8:surrogateescape'
     os.environ['WANDB_MODE'] = 'disabled'
+    os.environ['YOLO_AUTOINSTALL'] = 'false'
 
 
 def config_at(path):
@@ -41,6 +46,36 @@ def config_at(path):
     check_equal('config purpose dev', 'source_dev', config['dataset']['dev_purpose'])
     check_equal('selection', [0, 2], config['selection']['class_ids'])
     check_equal('tie policy', 'retain_earlier', config['selection']['tie_policy'])
+    if config.get('experiment') == 'source_s3':
+        from source_contract import S3_EVALUATION
+        check_equal('S3 evaluation profile', S3_EVALUATION, config['monitor']['profile'])
+        check_equal('S3 shared AMP initial scale', 1., config['numerics']['amp_initial_scale'])
+        check_equal('S3 sampling algorithm', 'small_thin_union_weighted_v1', config['sampling']['algorithm'])
+        if config['sampling']['arm'] not in ('R', 'S') or config['training']['seed'] not in (17, 29, 43):
+            raise ContractError('Unregistered S3 arm/seed')
+        for key, value in {'epochs': 100, 'batch': 16, 'workers': 4, 'imgsz': 640,
+                           'nbs': 64, 'close_mosaic': 10, 'amp': True, 'cache': False,
+                           'time': None, 'fraction': 1., 'compile': False, 'multi_scale': 0.}.items():
+            check_equal('S3 locked '+key, value, config['training'][key])
+        check_equal('S3 fixed weights', (2, 1, 4000),
+                    tuple(config['sampling'][k] for k in ('target_weight', 'other_weight', 'slots')))
+        check_equal('S3 membership counts', (922, 1617),
+                    tuple(config['sampling'][k] for k in ('target_images', 'target_gt')))
+        check_equal('S3 full preflight schedule', (2, 100, 4000, 500),
+                    tuple(config['preflight'][k] for k in ('epochs', 'schedule_epochs', 'train_images', 'dev_images')))
+        check_equal('S3 role checkpoints only', 0, config['selection']['checkpoint_period'])
+        check_equal('S3 policy paths', {'rules': 'RULES.md', 'reference': 'runs/a_001/train/best_dev_metrics.json',
+                    'diagnostic_reference': 'runs/a_001_diag/dev/metrics.json', 'slice_reference': 'runs/a_001_diag/slices.csv'}, config['policy'])
+        check_equal('S3 full monitor', (True, 1, 1, 0),
+                    tuple(config['monitor'][k] for k in ('enabled', 'every', 'batch', 'workers')))
+        check_equal('S3 policy', 'six_class_rules_v1', config['selection']['policy'])
+        check_equal('S3 stopping', 'horizon_only', config['selection']['stop_policy'])
+        baseline = yaml.safe_load((ROOT/'runs/a_001/train/args.yaml').read_text(encoding='utf-8'))
+        excluded = {'model', 'data', 'project', 'name', 'save_dir', 'resume', 'task', 'mode', 'seed', 'patience', 'plots'}
+        check_equal('S3 explicit original fields', set(baseline)-excluded,
+                    set(config['training'])-excluded)
+        for key in set(baseline)-excluded:
+            check_equal('S3 original recipe '+key, baseline[key], config['training'][key])
     return config
 
 
@@ -69,6 +104,7 @@ def environment(config, output, cloud=False):
                    'disk_total_bytes': shutil.disk_usage(output.resolve()).total,
                    'packages': {d.metadata['Name']: d.version for d in importlib.metadata.distributions()}})
     if cloud:
+        check_equal('cloud operating system', 'Linux', platform.system())
         cfg = config['cloud']
         if cfg['gpu_name_contains'] not in actual['gpu'] or torch.cuda.device_count() != 1:
             raise ContractError(f'Expected single RTX 4090; actual={actual["gpu"]}, count={torch.cuda.device_count()}')
@@ -115,26 +151,41 @@ def acquire_weights(config):
 def code_identity():
     return {f'scripts/{name}': sha256(ROOT / 'scripts' / name)
             for name in ('source_contract.py', 'source_trainer.py', 'train_source.py',
-                         'evaluate.py', 'train_monitor.py')}
+                         'evaluate.py', 'train_monitor.py', 'detection_metrics.py',
+                         'source_sampling.py', 'source_policy.py')}
 
 
 def identity(config, contract, weights, batch, scope):
-    return {'ready_sha256': contract['ready_sha256'],
+    result = {'ready_sha256': contract['ready_sha256'],
             'data_fingerprint': contract['ready']['data_fingerprint'],
             'normalization_version': contract['ready']['normalization_version'],
             'grouping_protocol_sha256': contract['ready']['grouping_protocol']['sha256'],
             'config_sha256': canonical_hash(config), 'code': code_identity(),
             'pretrained_sha256': weights['sha256'], 'batch': batch, 'scope': scope}
+    if config.get('experiment') == 'source_s3':
+        from source_policy import load_rules, reference_at
+        runtime_hash = os.environ.get('NIGHT_SOURCE_RUNTIME_IDENTITY')
+        if not runtime_hash:
+            raise ContractError('S3 identity requires the verified new runner runtime identity')
+        result['runtime_identity_sha256'] = runtime_hash
+        result['s3_policy'] = {'rules_sha256': load_rules(ROOT/'RULES.md')['sha256'],
+                               'references': reference_at(ROOT)['identity'],
+                               'plan_sha256': sha256(ROOT/'specs/s3/plan.md'),
+                               'original_args_sha256': sha256(ROOT/'runs/a_001/train/args.yaml')}
+        result['evaluation_policy'] = config['monitor']['profile']
+    return result
 
 
 def run_segment(config, contract, weights, run_dir, dataset_yaml, batch, scope,
                 resume=None, stop_after_epoch=None):
+    segment_started = time.perf_counter()
     import torch
     from ultralytics import YOLO
     from ultralytics.cfg import DEFAULT_CFG_DICT
     from source_trainer import SourceTrainer
+    s3 = config.get('experiment') == 'source_s3'
     args = dict(config['training'])
-    if scope in ('smoke', 'preflight'):
+    if scope in ('smoke', 'preflight') and not s3:
         args.update(epochs=config['smoke']['epochs'], workers=0 if scope == 'smoke' else 4)
     args.update(batch=batch, model=str(ROOT / config['model']['path']), data=str(dataset_yaml.resolve()),
                 device=0, project=str(run_dir.parent.resolve()), name=run_dir.name,
@@ -158,16 +209,38 @@ def run_segment(config, contract, weights, run_dir, dataset_yaml, batch, scope,
     write_json(audit_dir / 'config_resolved.json', config)
     write_json(audit_dir / 'defaults_locked.json', DEFAULT_CFG_DICT)
     write_json(audit_dir / 'trainer_passed.json', args)
+    if s3:
+        from source_policy import load_rules, reference_at
+        gate = read_json(Path(os.environ['NIGHT_SOURCE_RESOURCE_GATE']))
+        write_json(audit_dir/'resource_gate.json', gate)
+        write_json(run_dir/'policy_inputs.json', {'rules': load_rules(ROOT/'RULES.md'), 'reference': reference_at(ROOT)})
+        for rel in ['specs/s3/plan.md', 'RULES.md', 'configs/source_s3.yaml',
+                    *code_identity()]:
+            target = run_dir/'code'/rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                check_equal('immutable run snapshot '+rel, sha256(ROOT/rel), sha256(target))
+            else:
+                shutil.copyfile(ROOT/rel, target)
     write_json(run_dir / 'source_run.json', {'identity': current_identity, 'scope': scope,
                'formal_A': scope == 'formal', 'final_tests_run': False,
                'dataset_yaml': str(dataset_yaml.resolve())})
-    trainer = SourceTrainer(overrides=args)
+    if s3:
+        from source_trainer import S3Trainer
+        from source_policy import SelectionPolicy, load_rules, reference_at
+        trainer = S3Trainer(overrides=args)
+        trainer.s3_amp_initial_scale = config['numerics']['amp_initial_scale']
+        trainer.s3_contract, trainer.s3_arm = contract, config['sampling']['arm']
+        trainer.s3_policy = SelectionPolicy(load_rules(ROOT/'RULES.md'), reference_at(ROOT), args['epochs'])
+        trainer.s3_sandbox = dataset_yaml.resolve().parent
+    else:
+        trainer = SourceTrainer(overrides=args)
     trainer.source_identity = current_identity
     trainer.expected_batch = batch
     trainer.source_expected_args = expected
     trainer.stop_after_epoch = stop_after_epoch
     observer = None
-    if scope in ('preflight', 'formal'):
+    if scope in ('preflight', 'formal') and not s3:
         from train_monitor import attach
         observer = attach(trainer, run_dir, contract['ready']['counts']['source_train'],
                           config.get('monitor', {}))
@@ -178,13 +251,25 @@ def run_segment(config, contract, weights, run_dir, dataset_yaml, batch, scope,
         if observer is not None:
             observer.close()
     runtime = read_json(audit_dir / 'runtime.json')
+    if s3:
+        runtime.update(segment_including_setup_final_seconds=time.perf_counter()-segment_started,
+                       final_eval_seconds=read_json(run_dir/'final_eval/run.json')['seconds'])
+        write_json(audit_dir/'runtime.json', runtime)
     if runtime['optimizer_steps'] < 1 or runtime['batches'] < 1:
         raise ContractError(f'Forward/backward/optimizer evidence missing: {runtime}')
     best = run_dir / 'weights' / 'best.pt'
+    if s3:
+        roles = read_json(run_dir/'checkpoint_roles.json')
+        role = 'best' if 'best' in roles else 'diagnostic'
+        best = run_dir/roles[role]['path']
     model = YOLO(str(best))
     check_equal('reloaded model classes', NAMES, list(model.names.values()))
     write_json(audit_dir / 'checkpoint_reload.json', {'best_sha256': sha256(best),
+               'selected_role': role if s3 else 'best',
                'names': model.names, 'reloaded': True, 'runtime': runtime})
+    if s3:
+        from source_release import seal_training
+        seal_training(run_dir, scope)
     del trainer, model
     torch.cuda.empty_cache()
     return runtime
@@ -208,10 +293,83 @@ def verify_recipe(path, expected_sha256, expected_identity):
     if recipe['identity']['batch'] not in (16, 8):
         raise ContractError(f'Unauthorized formal batch: {recipe["identity"]["batch"]}')
     check_equal('recipe identity', expected_identity, recipe['identity'])
+    if 's3_policy' in expected_identity:
+        check_equal('S3 recipe batch', 16, recipe['identity']['batch'])
+        check_equal('S3 preflight schedule', 100, recipe['schedule_epochs'])
+        check_equal('S3 preflight complete epochs', 2, recipe['preflight_runtime']['epoch_1based'])
+        check_equal('S3 preflight full counts', [4000, 500], recipe['preflight_counts'])
     return recipe
 
 
-def main():
+def recover_s3_outputs(run_dir, epoch):
+    """Replay only an incomplete epoch; never append duplicates to completed evidence."""
+    import csv
+    for name in ('source_metrics.jsonl', 'timings.jsonl', 'train_metrics.csv', 'dev_metrics.csv', 'results.csv'):
+        path = safe_path(run_dir, name)
+        if not path.exists():
+            continue
+        if path.suffix == '.jsonl':
+            kept = []
+            for line in path.read_text(encoding='utf-8').splitlines():
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    break
+                if row['epoch'] <= epoch:
+                    kept.append(line)
+            path.write_text(''.join(line+'\n' for line in kept), encoding='utf-8')
+        else:
+            with path.open(encoding='utf-8', newline='') as stream:
+                reader = csv.DictReader(stream)
+                fields = reader.fieldnames
+                epoch_key = next(k for k in fields if k.strip() == 'epoch')
+                rows = [r for r in reader if int(r[epoch_key]) <= epoch]
+            with path.open('w', encoding='utf-8', newline='') as stream:
+                writer = csv.DictWriter(stream, fieldnames=fields)
+                writer.writeheader(); writer.writerows(rows)
+    for folder in ('observations', 'sampling'):
+        for path in (run_dir/folder).glob('epoch*.*'):
+            import re
+            match = re.fullmatch(r'epoch(\d+)\.(json|npz)', path.name)
+            if match and int(match[1]) > epoch:
+                safe_path(run_dir, path.relative_to(run_dir).as_posix()).unlink()
+
+
+def validate_s3_resume(run_dir, checkpoint, ckpt):
+    if checkpoint.name != 'last.pt':
+        raise ContractError('S3 resumes only the latest complete last.pt, never an earlier selected role')
+    if (run_dir/'manifest.json').exists() and read_json(run_dir/'manifest.json')['status'] == 'completed_formal':
+        raise ContractError('Completed S3 formal run cannot be truncated/resumed')
+    epoch = ckpt['epoch']+1
+    check_equal('resumed source metadata', ckpt['source_identity'], read_json(run_dir/'source_run.json')['identity'])
+    roles = read_json(run_dir/'checkpoint_roles.json')
+    check_equal('resumed last epoch', epoch, roles['last']['epoch'])
+    actual = sha256(checkpoint)
+    check_equal('resumed last role bytes', actual, roles['last']['sha256'])
+    obs = read_json(run_dir/f'observations/epoch{epoch:03d}.json')
+    check_equal('resumed committed observation bytes', actual, obs['checkpoint_sha256'])
+    check_equal('resumed complete PR bytes', obs['pr_sha256'], sha256(run_dir/f'observations/epoch{epoch:03d}.npz'))
+    sample = read_json(run_dir/f'sampling/epoch{epoch:03d}.json')
+    check_equal('resumed sampler bytes', sample['consumed_sha256'], sha256(run_dir/f'sampling/epoch{epoch:03d}.npz'))
+    for role in ('best', 'diagnostic'):
+        state = ckpt['source_resume']['policy'][role]
+        if state is None:
+            if role in roles:
+                raise ContractError('Role appeared after the committed resume point: '+role)
+        else:
+            check_equal('resumed '+role+' epoch', state['epoch'], roles[role]['epoch'])
+            check_equal('resumed '+role+' bytes', roles[role]['sha256'], sha256(safe_path(run_dir, roles[role]['path'])))
+    return epoch
+
+
+def stage_run(contract, destination, limits, s3, stack):
+    if s3:
+        parent = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix='source_s3_data_')))
+        destination = parent/'data'
+    return stage_dataset(contract, destination, limits)
+
+
+def _main(stack):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('mode', choices=['environment', 'download', 'verify', 'smoke', 'preflight', 'formal', 'resume'])
     parser.add_argument('--data-root', type=Path, default=ROOT / 'data/soda10m/splits/source_v1')
@@ -223,9 +381,34 @@ def main():
     parser.add_argument('--checkpoint', type=Path)
     parser.add_argument('--hourly-price', type=float)
     parser.add_argument('--currency')
+    parser.add_argument('--arm', choices=['R', 'S'])
+    parser.add_argument('--seed', type=int, choices=[17, 29, 43])
+    parser.add_argument('--resource-gate', type=Path)
+    parser.add_argument('--runtime-identity-sha256')
     args = parser.parse_args()
     configure_paths()
     config = config_at(args.config)
+    if args.arm is not None or args.seed is not None:
+        if config.get('experiment') != 'source_s3':
+            parser.error('--arm/--seed apply only to source_s3')
+        if args.arm is not None:
+            config['sampling']['arm'] = args.arm
+        if args.seed is not None:
+            config['training']['seed'] = args.seed
+    s3 = config.get('experiment') == 'source_s3'
+    if s3 and args.mode == 'smoke':
+        parser.error('S3 uses full two-epoch preflight at the 100-epoch schedule; no sampled smoke')
+    if s3 and args.mode in ('preflight', 'formal', 'resume'):
+        if not args.resource_gate or not args.runtime_identity_sha256:
+            parser.error('S3 training must enter through run_source_cloud_job.py with its new resource/runtime gate')
+        from source_cloud_gate import runtime_identity
+        gate = read_json(args.resource_gate)
+        check_equal('S3 resource gate status', 'passed', gate['status'])
+        current = runtime_identity(ROOT, args.config, config['sampling']['arm'], config['training']['seed'])
+        check_equal('S3 external runtime identity', args.runtime_identity_sha256, current['identity_sha256'])
+        check_equal('S3 resource gate identity', current, gate['runtime_identity'])
+        os.environ['NIGHT_SOURCE_RUNTIME_IDENTITY'] = args.runtime_identity_sha256
+        os.environ['NIGHT_SOURCE_RESOURCE_GATE'] = str(args.resource_gate.resolve())
     if args.mode == 'download':
         print(json.dumps(acquire_weights(config), ensure_ascii=False))
         return
@@ -248,16 +431,22 @@ def main():
         if not args.checkpoint:
             parser.error('--checkpoint is required')
         ident = check_checkpoint(args.checkpoint, contract, config, weights)
+        if s3 and ident['scope'] != 'formal':
+            raise ContractError('S3 preflight is a fresh two-epoch check; failed preflight must restart from COCO')
         if ident['scope'] in ('formal', 'preflight'):
             environment(config, args.output / 'environment', cloud=True)
         run_dir = args.checkpoint.resolve().parents[1]
         metadata = read_json(run_dir / 'source_run.json')
         dataset_yaml = Path(metadata['dataset_yaml'])
         # Re-stage from current verified input if a run is relocated; no blind checkpoint data path.
-        dataset_yaml, _ = stage_dataset(contract, run_dir / f'data_resume_{time.time_ns()}',
-                        {'source_train': 64, 'source_dev': 32} if ident['scope'] == 'smoke' else None)
+        dataset_yaml, _ = stage_run(contract, run_dir / f'data_resume_{time.time_ns()}',
+                        {'source_train': 64, 'source_dev': 32} if ident['scope'] == 'smoke' else None, s3, stack)
+        if s3:
+            ckpt = __import__('torch').load(args.checkpoint, map_location='cpu', weights_only=False)
+            epoch = validate_s3_resume(run_dir, args.checkpoint, ckpt)
+            recover_s3_outputs(run_dir, epoch)
         run_segment(config, contract, weights, run_dir, dataset_yaml, ident['batch'], ident['scope'],
-                    resume=args.checkpoint)
+                    resume=args.checkpoint, stop_after_epoch=2 if s3 and ident['scope'] == 'preflight' else None)
         print('RESUME_COMPLETE')
         return
     if args.mode == 'formal':
@@ -265,21 +454,21 @@ def main():
             parser.error('--recipe and --recipe-sha256 from successful preflight are required')
         batch = read_json(args.recipe)['identity']['batch']
         verify_recipe(args.recipe, args.recipe_sha256, identity(config, contract, weights, batch, 'formal'))
-        dataset_yaml, _ = stage_dataset(contract, args.output / 'data')
+        dataset_yaml, _ = stage_run(contract, args.output / 'data', None, s3, stack)
         run_segment(config, contract, weights, args.output / 'train', dataset_yaml, batch, 'formal')
         print('FORMAL_A_TRAINING_COMPLETE_SOURCE_DEV_ONLY')
         return
     import torch
     if args.mode == 'preflight' and args.hourly_price and (args.hourly_price < 0 or not args.currency):
         parser.error('Positive actual --hourly-price requires --currency; omit price while unknown')
-    batches = [2, 1] if args.mode == 'smoke' else [16, 8]
+    batches = [16] if s3 else [2, 1] if args.mode == 'smoke' else [16, 8]
     for batch in batches:
         run_dir = args.output / f'{args.mode}_batch{batch}'
-        dataset_yaml, selections = stage_dataset(contract, args.output / f'data_{args.mode}_batch{batch}',
-                          {'source_train': 64, 'source_dev': 32} if args.mode == 'smoke' else None)
+        dataset_yaml, selections = stage_run(contract, args.output / f'data_{args.mode}_batch{batch}',
+                          {'source_train': 64, 'source_dev': 32} if args.mode == 'smoke' else None, s3, stack)
         try:
             runtime = run_segment(config, contract, weights, run_dir, dataset_yaml, batch, args.mode,
-                                  stop_after_epoch=1 if args.mode == 'smoke' else None)
+                                  stop_after_epoch=2 if s3 else 1 if args.mode == 'smoke' else None)
             if args.mode == 'smoke':
                 checkpoint = run_dir / 'weights/last.pt'
                 first = read_json(checkpoint.with_suffix('.pt.sha256.json'))
@@ -302,6 +491,12 @@ def main():
                           'estimated_100_epoch_hours': runtime['mean_epoch_seconds'] * 100 / 3600,
                           'estimated_100_epoch_cost': (runtime['mean_epoch_seconds'] * 100 / 3600 *
                                                        args.hourly_price) if args.hourly_price else None}
+                if s3:
+                    recipe.update(schema_version=2, schedule_epochs=100, preflight_counts=[4000, 500],
+                                  preflight_scope='full 4000/500; stop after epoch2 of 100; cold/warmup only',
+                                  timing_limit='not steady-state or close-mosaic measurement',
+                                  measured_final_eval_seconds=runtime['final_eval_seconds'],
+                                  measured_segment_including_setup_final_seconds=runtime['segment_including_setup_final_seconds'])
                 write_json(args.output / 'FROZEN_RECIPE.json', recipe)
                 write_json(args.output / 'FROZEN_RECIPE.sha256.json', {
                     'sha256': sha256(args.output / 'FROZEN_RECIPE.json'),
@@ -315,6 +510,11 @@ def main():
             torch.cuda.empty_cache()
             if batch == batches[-1]:
                 raise ContractError(f'{args.mode}: OOM at minimum authorized batch={batch}; stop and diagnose') from e
+
+
+def main():
+    with contextlib.ExitStack() as stack:
+        _main(stack)
 
 
 if __name__ == '__main__':

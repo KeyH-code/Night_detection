@@ -4,13 +4,15 @@ import json
 import shutil
 import sys
 import tarfile
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 import bundle_source as bundle
-from source_contract import sha256
+from source_contract import ContractError, sha256, write_json
 
 
-def test_package_uses_current_layout_and_exact_data_whitelist(tmp_path, monkeypatch):
+@pytest.mark.parametrize('config_name', ['source_a.yaml', 'source_s3.yaml'])
+def test_package_uses_current_layout_and_exact_data_whitelist(tmp_path, monkeypatch, config_name):
     project = Path(__file__).resolve().parents[2]
     root = tmp_path / '中文项目'
     for folder in ('scripts', 'configs', 'environment', 'tests/train'):
@@ -18,6 +20,11 @@ def test_package_uses_current_layout_and_exact_data_whitelist(tmp_path, monkeypa
         for p in (project / folder).iterdir():
             if p.is_file():
                 shutil.copyfile(p, root / folder / p.name)
+    for rel in ('RULES.md', 'specs/s3/plan.md', 'runs/a_001/train/best_dev_metrics.json',
+                'runs/a_001/train/args.yaml', 'runs/a_001_diag/dev/metrics.json', 'runs/a_001_diag/slices.csv'):
+        target = root/rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(project/rel, target)
     (root / 'weights').mkdir()
     for p in (project / 'weights').iterdir():
         if p.is_file():
@@ -34,8 +41,9 @@ def test_package_uses_current_layout_and_exact_data_whitelist(tmp_path, monkeypa
     contract = {'ready': ready, 'files': ready['files']}
     monkeypatch.setattr(bundle, 'ROOT', root)
     monkeypatch.setattr(bundle, 'verify_source', lambda *_: contract)
+    monkeypatch.chdir(root)
     output = tmp_path / 'package.tar.gz'
-    bundle.build(data, sha256(data / 'READY.json'), output)
+    bundle.build(data, sha256(data / 'READY.json'), output, config_path=Path('configs')/config_name)
     with tarfile.open(output) as archive:
         names = set(archive.getnames())
         manifest = json.load(archive.extractfile('source_a_kit/PACKAGE_MANIFEST.json'))
@@ -43,4 +51,17 @@ def test_package_uses_current_layout_and_exact_data_whitelist(tmp_path, monkeypa
     assert not any('source_test' in p or 'artifacts' in p or 'local_smoke' in p for p in names)
     assert 'source_a_kit/scripts/run_source_cloud_job.py' in names
     assert 'source_a_kit/tests/train/test_bundle.py' in names
+    assert 'source_a_kit/scripts/source_sampling.py' in names
+    assert 'source_a_kit/scripts/source_policy.py' in names
+    assert 'source_a_kit/scripts/detection_metrics.py' in names
+    assert 'source_a_kit/configs/source_s3.yaml' in names
+    assert not any('diagnostic_review.py' in p or '/scripts/diagnose.py' in p for p in names)
     assert manifest['status'] == 'PACKAGED_PENDING_VALIDATION'
+    assert manifest['active_config'] == 'configs/'+config_name
+
+
+def test_verifier_rejects_missing_policy_dependency_before_any_data_access(tmp_path, monkeypatch):
+    import verify_source_bundle as verifier
+    write_json(tmp_path/'PACKAGE_MANIFEST.json', {'files': {'scripts/train_source.py': {}}})
+    monkeypatch.setattr(verifier, 'verify_source', lambda *_: pytest.fail('Data should not be reached'))
+    with pytest.raises(ContractError, match='dependencies'): verifier.verify(tmp_path)
