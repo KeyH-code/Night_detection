@@ -37,6 +37,7 @@
 | specs/s<编号>/plan.md | 该阶段目标、输入、实施步骤、文件范围、验证、产物、失败分支和审核状态；引用RULES |
 | specs/s<编号>/roadmap.md | 可选；复杂阶段内部的里程碑、顺序和依赖，不复制根plan路线或plan任务正文 |
 | specs/s<编号>/changemap.md | 可选；拟改文件/接口、变更原因、引用影响和验证对应关系；简单改动合入阶段plan |
+| specs/s3/scale.md | 行人分辨率专项路线、训练尺度对照与执行准备 |
 | specs/s<编号>/review.md | 已完成阶段的证据索引、退出结论及必要限制；无同期计划时明确事后整理，不替代reports或runs |
 
 后续实验/图目录行描述生成模式，不表示这些目录或结果已经存在。只有实际形成可复查证据时创建；本次规则与规划不预建实验目录或空报告。
@@ -116,3 +117,5 @@ checkpoint_roles.json区分best、diagnostic、last；零合格允许缺best，�
 本地收尾前将原云端封存清单原样保存在job/cloud_manifest.json，保留下载身份；train/manifest.json随后管理新增本地评价证据。最后一条run的job/cloud_completion.json记录两臂完成与云端进程/GPU核实，不代替平台关机或账单确认。配对结果使用runs/s3_<seed>/（如s3_17/），保存comparison.json/csv、逐臂intervals.json、采样汇总sampling.json/csv及绑定输入/代码的run.json；它是对照结果，不是新训练run。对应plots/s3_<seed>/的metrics.png、effects.png、sampling.png可用scripts/plot.py --source-pair重建。
 
 配对记录复核继续维护同一目录：transitions.json保存GT迁移及最终框的分数/IoU/匹配证据，同名csv是行人迁移GT的查阅简表；trajectory.csv/json保存原云端逐轮指标、描述性窗口及选模敏感性，不能伪装成逐轮逐GT预测或独立重复。trajectory.png用scripts/plot.py --trajectory重建。图表代码更替时，按实际被图引用的code/versions/<SHA前12位>/保存必要版本，不回写既有图所引用的代码快照。一次性统计程序仍放仓库外；机器证据与视觉/因果结论分开。
+
+固定 R 的输入尺度对照归 `runs/s3_17/scale.json`，保存权重及数据身份、三臂输入几何、逐目标覆盖和工作点迁移、六类 AP 及风险组区间。原图、权重和临时缩放图只引用冻结源或放在临时目录。
