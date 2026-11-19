@@ -119,3 +119,5 @@ checkpoint_roles.json区分best、diagnostic、last；零合格允许缺best，�
 配对记录复核继续维护同一目录：transitions.json保存GT迁移及最终框的分数/IoU/匹配证据，同名csv是行人迁移GT的查阅简表；trajectory.csv/json保存原云端逐轮指标、描述性窗口及选模敏感性，不能伪装成逐轮逐GT预测或独立重复。trajectory.png用scripts/plot.py --trajectory重建。图表代码更替时，按实际被图引用的code/versions/<SHA前12位>/保存必要版本，不回写既有图所引用的代码快照。一次性统计程序仍放仓库外；机器证据与视觉/因果结论分开。
 
 固定 R 的输入尺度对照归 `runs/s3_17/scale.json`，保存权重及数据身份、三臂输入几何、逐目标覆盖和工作点迁移、六类 AP 及风险组区间。原图、权重和临时缩放图只引用冻结源或放在临时目录。
+
+`scripts/person_fusion.py` 是行人多视图融合的本机白天开发复现入口。无梯度，单方案只用同一 checkpoint；`a1` 保持 `a_001 best` 的 640 非行人输出，`r80` 保持 R80 的 960 非行人输出。`tests/train/diagnose/test_person_fusion.py` 保护合并、类别隔离、上限、镜像坐标和身份语义。`runs/scale_<编号>/` 的固定权重子型只留筛查摘要、最终候选及原生参照的比较、可复查的融合对象及必要身份，不存重复原图、权重或验证器临时目录。
