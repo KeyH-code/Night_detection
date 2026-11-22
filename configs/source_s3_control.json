@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "purpose": "Exact additive U/17 compatibility pair; new cloud preflight still required",
+  "baseline_manifests": {
+    "R": "6256164eb144127028b714d5a43fef6e818f75cf4553f24b72e7f6712cdd960d",
+    "S": "a2487cb58717d7ef7390d27092e2bf7ee72f0d5e863cd69fe406e6cf08e920b5"
+  },
+  "baseline_runtime": {
+    "R": "77c9c971f82cd351d7c9e966c61db71946bc08f20afce538527fc02c7aa15c60",
+    "S": "0c36810bc55046bf142de100ae6ac2e7074ef615f02f0d8a84be3786c23c450f"
+  },
+  "reference_config_sha256": "bbbc53bd7835ed69a1f66d401f555815fff667636dfe9061d3c35829136dd2c9",
+  "U_config_sha256": "7a5008a955fc085b2c57343cb34018702ddc7bb39c9e22b0f4896e4865ca07fc",
+  "source_ready_sha256": "72e75ebd99014c830e0227061e390e6aed768ae724b532a5c2c90fd8dec93e85",
+  "pretrained_sha256": "d5ffc1a674953a08e11a8d21e022781b1b23a19b730afc309290bd9fb5305b95",
+  "core_files": [
+    "scripts/source_contract.py",
+    "scripts/source_trainer.py",
+    "scripts/train_source.py",
+    "scripts/evaluate.py",
+    "scripts/train_monitor.py",
+    "scripts/detection_metrics.py",
+    "scripts/source_sampling.py",
+    "scripts/source_policy.py"
+  ],
+  "old_files": {
+    "scripts/source_contract.py": "c7beb9bb5ca2aa86e3ebbd2574826928df3efd3a353ff455226dd225c9e213b0",
+    "scripts/source_trainer.py": "8765d7a7e22408558e05c4ec0ca945edd1390b81aa04dd2aec85b6bccf60994b",
+    "scripts/train_source.py": "53bd82daa538261f658764991de7c135402a9ee8dffa76e2876f7ec7888945e3",
+    "scripts/evaluate.py": "cb8240cbe1808e9e90b6c228c3dc660d4f79e702b0088b99005f53314d59ddb2",
+    "scripts/detection_metrics.py": "e119dd8edd5ef501d10560db2893e25324091e7ec47207810e13beb5f41265ce",
+    "scripts/train_monitor.py": "7dd8eea5b1b0f72a064f4b7fa8820a294c2e30128ebad751c32d1c44a3dc690b",
+    "scripts/source_sampling.py": "a233b77033dc0ce4ad1e6257330990b3d91e0e195500e044e2b9779b28e0c798",
+    "scripts/source_policy.py": "5209b7b79d43cc477cf19106459c7e811a1cdf43de8bedc2ab96a041a6fa2d82",
+    "scripts/source_resources.py": "20bf26f92df142e2178640f81f2bfa2f8029805538f5fdb30daf6b9164cca963",
+    "scripts/source_cloud_gate.py": "07ed01dda3a1a67caca03bddb2d76e7619be69b598b3159c0221f030d9b7f7ff",
+    "scripts/run_source_cloud_job.py": "7612537746d0abba06207869c5844dc98b1d2af96b2c869fab8bf92694e26a4b",
+    "scripts/source_release.py": "92ee23e8c65fa583a6c1cc83c967a21327bbcb4222a37b0f6a907a328197136e",
+    "scripts/bundle_source.py": "2fa41bc843d125bf173807ecb82b9b1cd003be0f56453f04e8129155bf0c73a6",
+    "scripts/verify_source_bundle.py": "abd33a1c2aad9ba01a0b208d09e27b22b3c823680b2d3abbc65c97d1b5158f0c",
+    "RULES.md": "4d8bdf8cdb8e09af6e0cca6b42a98597a81960f4e4f4633f464f35ae4f056144",
+    "specs/s3/plan.md": "8d2d982f319b0fd6eed2f9c31bb5ce59235e46e2f734a6a8d787cfabdde2730d",
+    "runs/a_001/train/args.yaml": "b907370f0b8f26d0a6965dce9df68d383bbb3aae15b5570d76413416bfc34fc0",
+    "runs/a_001/train/best_dev_metrics.json": "8041222493bca20d7422bff00c5df13372e81600ddf87d300ac41118fa5f2aa0",
+    "runs/a_001_diag/dev/metrics.json": "bdde4159f849432c8631f09f2d8608732aea7d1eb91970d9fe740123508c7a3e",
+    "runs/a_001_diag/slices.csv": "42060f2254b4969738109e583fb35d56866a07e9eef8898f92cc3e2cd641f37b",
+    "environment/requirements-linux.lock": "cdf0d2824999dbfab97fcb15965845d66d0e9bf804991e9c0abae257989e488a"
+  },
+  "new_files": {
+    "RULES.md": "4d8bdf8cdb8e09af6e0cca6b42a98597a81960f4e4f4633f464f35ae4f056144",
+    "configs/source_s3.yaml": "4a0e702b60d078946ca87778e9c4b23dc3c08aae95a163dc346f9b4446bdf927",
+    "environment/requirements-linux.lock": "cdf0d2824999dbfab97fcb15965845d66d0e9bf804991e9c0abae257989e488a",
+    "runs/a_001/train/args.yaml": "b907370f0b8f26d0a6965dce9df68d383bbb3aae15b5570d76413416bfc34fc0",
+    "runs/a_001/train/best_dev_metrics.json": "8041222493bca20d7422bff00c5df13372e81600ddf87d300ac41118fa5f2aa0",
+    "runs/a_001_diag/dev/metrics.json": "bdde4159f849432c8631f09f2d8608732aea7d1eb91970d9fe740123508c7a3e",
+    "runs/a_001_diag/slices.csv": "42060f2254b4969738109e583fb35d56866a07e9eef8898f92cc3e2cd641f37b",
+    "scripts/bundle_source.py": "91ba346e7642c5b085a3396f497b0f4af10c3c7c50c354d47ec61e6dfe5916bc",
+    "scripts/detection_metrics.py": "e119dd8edd5ef501d10560db2893e25324091e7ec47207810e13beb5f41265ce",
+    "scripts/evaluate.py": "cb8240cbe1808e9e90b6c228c3dc660d4f79e702b0088b99005f53314d59ddb2",
+    "scripts/run_source_cloud_job.py": "a16795e1814e042ce7cad58514e33fda571118842d2deaacf486e3688aeae193",
+    "scripts/source_cloud_gate.py": "e8aed62e1c3a7d7604331a4066ee635671dff27aa8384f56067b6b9d7194dd1e",
+    "scripts/source_contract.py": "c7beb9bb5ca2aa86e3ebbd2574826928df3efd3a353ff455226dd225c9e213b0",
+    "scripts/source_control.py": "28650c83d059a4c56830a921c51cbdc74fb95ec1648692a1e018655699165bd6",
+    "scripts/source_policy.py": "5209b7b79d43cc477cf19106459c7e811a1cdf43de8bedc2ab96a041a6fa2d82",
+    "scripts/source_release.py": "92ee23e8c65fa583a6c1cc83c967a21327bbcb4222a37b0f6a907a328197136e",
+    "scripts/source_resources.py": "20bf26f92df142e2178640f81f2bfa2f8029805538f5fdb30daf6b9164cca963",
+    "scripts/source_sampling.py": "53886135aa9955c604d205b3afa243bd998400602643be05722d8948ec98b95b",
+    "scripts/source_trainer.py": "8765d7a7e22408558e05c4ec0ca945edd1390b81aa04dd2aec85b6bccf60994b",
+    "scripts/train_monitor.py": "7dd8eea5b1b0f72a064f4b7fa8820a294c2e30128ebad751c32d1c44a3dc690b",
+    "scripts/train_source.py": "e402a18f6348c6fb745e44ad749e4895a36f9a517362cb260db25ffd2e9794d4",
+    "scripts/verify_source_bundle.py": "9c41a473f5d3ef58c20d55cf4ae04dfb9f1dc61b6f8de130fd641902acf6c90f",
+    "specs/s3/plan.md": "e955b0251707c6aa3d9545a3c400e55b5afdbbac0a39fc4884a2aea67121f729"
+  },
+  "allowed_legacy_changes": [
+    "scripts/bundle_source.py",
+    "scripts/run_source_cloud_job.py",
+    "scripts/source_cloud_gate.py",
+    "scripts/source_sampling.py",
+    "scripts/train_source.py",
+    "scripts/verify_source_bundle.py",
+    "specs/s3/plan.md"
+  ],
+  "common_identity": {
+    "ready_sha256": "72e75ebd99014c830e0227061e390e6aed768ae724b532a5c2c90fd8dec93e85",
+    "data_fingerprint": "7a275a3ec80a7628ffea31c05093c4960ba453dad94156f70f2d3d8871c36f54",
+    "normalization_version": "clip_xyxy_to_image_bounds_v1",
+    "grouping_protocol_sha256": "1c0d8cae665dc3023fbd48ec32879da8eaa36f55b54714a34d397f9ef85940e3",
+    "pretrained_sha256": "d5ffc1a674953a08e11a8d21e022781b1b23a19b730afc309290bd9fb5305b95",
+    "batch": 16,
+    "scope": "formal",
+    "s3_policy": {
+      "rules_sha256": "4d8bdf8cdb8e09af6e0cca6b42a98597a81960f4e4f4633f464f35ae4f056144",
+      "references": {
+        "runs/a_001/train/best_dev_metrics.json": "8041222493bca20d7422bff00c5df13372e81600ddf87d300ac41118fa5f2aa0",
+        "runs/a_001_diag/dev/metrics.json": "bdde4159f849432c8631f09f2d8608732aea7d1eb91970d9fe740123508c7a3e",
+        "runs/a_001_diag/slices.csv": "42060f2254b4969738109e583fb35d56866a07e9eef8898f92cc3e2cd641f37b"
+      },
+      "plan_sha256": "8d2d982f319b0fd6eed2f9c31bb5ce59235e46e2f734a6a8d787cfabdde2730d",
+      "original_args_sha256": "b907370f0b8f26d0a6965dce9df68d383bbb3aae15b5570d76413416bfc34fc0"
+    },
+    "evaluation_policy": "dev_only_local_final_v1"
+  },
+  "runtime_environment": {
+    "platform": "Linux",
+    "machine": "x86_64",
+    "packages": {
+      "torch": "2.14.0+cu130",
+      "torchvision": "0.29.0+cu130",
+      "ultralytics": "8.4.171"
+    },
+    "library_code": {
+      "ultralytics/engine/trainer.py": "4b1767a25de8ffcb0d5ec61279a22cec267077fe0da9e6889d179d952b20673c",
+      "ultralytics/engine/validator.py": "8d30fb06b435fcb848def7c18a9d31efe6bb9b148f5e9e4ec1e8f08dbcfd2025",
+      "ultralytics/data/augment.py": "4bd6573fbef1a7ff746b88b5f8d6847e2a06666d68a53cab36c6ae62cdd4b2f3",
+      "ultralytics/data/base.py": "1e5b99a17fa9ddee7ec5ecf204099eb91a8b8dd98da74afa54eae6e32e76eead",
+      "ultralytics/data/build.py": "acc9ec58b8c606da0a91a20b013094927a49cdc0f9cb7d1e2f0355c7de00af8e",
+      "ultralytics/data/dataset.py": "af6d1b140745984e0c963cdeaa626308278ef583994b247e4d59741896fde7a9",
+      "ultralytics/utils/nms.py": "be377713d11365123f89d781250a45a387c5cfdeaabaaced60ecdb6c46acec60",
+      "ultralytics/utils/metrics.py": "a41b9c09c19f5c41990b00d323efc3ef657d391ad0a1a7eb1774b5556d2fd37e"
+    }
+  },
+  "limitations": [
+    "Original R/S numerical driver/cuDNN/backend flags unavailable; no bitwise reproducibility claim."
+  ],
+  "baseline_git_commit": "f775752410781427385b1a30dd35d12bde9d814b"
+}

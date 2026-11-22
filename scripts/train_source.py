@@ -37,9 +37,18 @@ def configure_paths():
     os.environ['YOLO_AUTOINSTALL'] = 'false'
 
 
-def config_at(path):
+def config_at(path, arm=None, seed=None):
     import yaml
     config = yaml.safe_load(Path(path).read_text(encoding='utf-8'))
+    if arm is not None or seed is not None:
+        if config.get('experiment') != 'source_s3':
+            raise ContractError('--arm/--seed apply only to source_s3')
+        if arm is not None:
+            config['sampling']['arm'] = arm
+        if seed is not None:
+            config['training']['seed'] = seed
+        if arm == 'U':
+            config['sampling'].update(target_weight=1, other_weight=1, indices_rng_scope='S')
     check_equal('config dataset version', 'source_v1', config['dataset']['version'])
     check_equal('config names', NAMES, config['dataset']['names'])
     check_equal('config purpose train', 'source_train', config['dataset']['train_purpose'])
@@ -51,14 +60,20 @@ def config_at(path):
         check_equal('S3 evaluation profile', S3_EVALUATION, config['monitor']['profile'])
         check_equal('S3 shared AMP initial scale', 1., config['numerics']['amp_initial_scale'])
         check_equal('S3 sampling algorithm', 'small_thin_union_weighted_v1', config['sampling']['algorithm'])
-        if config['sampling']['arm'] not in ('R', 'S') or config['training']['seed'] not in (17, 29, 43):
+        control = config['sampling']['arm'] == 'U'
+        if (config['sampling']['arm'] not in ('R', 'S', 'U') or config['training']['seed'] not in (17, 29, 43)
+                or (control and config['training']['seed'] != 17)):
             raise ContractError('Unregistered S3 arm/seed')
         for key, value in {'epochs': 100, 'batch': 16, 'workers': 4, 'imgsz': 640,
                            'nbs': 64, 'close_mosaic': 10, 'amp': True, 'cache': False,
                            'time': None, 'fraction': 1., 'compile': False, 'multi_scale': 0.}.items():
             check_equal('S3 locked '+key, value, config['training'][key])
-        check_equal('S3 fixed weights', (2, 1, 4000),
+        check_equal('S3 fixed weights', (1 if control else 2, 1, 4000),
                     tuple(config['sampling'][k] for k in ('target_weight', 'other_weight', 'slots')))
+        if control:
+            check_equal('U index RNG scope', 'S', config['sampling'].get('indices_rng_scope'))
+        elif 'indices_rng_scope' in config['sampling']:
+            raise ContractError('R/S RNG metadata must remain unchanged')
         check_equal('S3 membership counts', (922, 1617),
                     tuple(config['sampling'][k] for k in ('target_images', 'target_gt')))
         check_equal('S3 full preflight schedule', (2, 100, 4000, 500),
@@ -215,7 +230,8 @@ def run_segment(config, contract, weights, run_dir, dataset_yaml, batch, scope,
         write_json(audit_dir/'resource_gate.json', gate)
         write_json(run_dir/'policy_inputs.json', {'rules': load_rules(ROOT/'RULES.md'), 'reference': reference_at(ROOT)})
         for rel in ['specs/s3/plan.md', 'RULES.md', 'configs/source_s3.yaml',
-                    *code_identity()]:
+                    *code_identity(), *(['scripts/source_control.py', 'configs/source_s3_control.json']
+                                       if config['sampling']['arm'] == 'U' else [])]:
             target = run_dir/'code'/rel
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists():
@@ -381,20 +397,13 @@ def _main(stack):
     parser.add_argument('--checkpoint', type=Path)
     parser.add_argument('--hourly-price', type=float)
     parser.add_argument('--currency')
-    parser.add_argument('--arm', choices=['R', 'S'])
+    parser.add_argument('--arm', choices=['R', 'S', 'U'])
     parser.add_argument('--seed', type=int, choices=[17, 29, 43])
     parser.add_argument('--resource-gate', type=Path)
     parser.add_argument('--runtime-identity-sha256')
     args = parser.parse_args()
     configure_paths()
-    config = config_at(args.config)
-    if args.arm is not None or args.seed is not None:
-        if config.get('experiment') != 'source_s3':
-            parser.error('--arm/--seed apply only to source_s3')
-        if args.arm is not None:
-            config['sampling']['arm'] = args.arm
-        if args.seed is not None:
-            config['training']['seed'] = args.seed
+    config = config_at(args.config, args.arm, args.seed)
     s3 = config.get('experiment') == 'source_s3'
     if s3 and args.mode == 'smoke':
         parser.error('S3 uses full two-epoch preflight at the 100-epoch schedule; no sampled smoke')

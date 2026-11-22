@@ -66,12 +66,12 @@ def training_index(contract, image_files=None):
 
 
 def indices_for(index, seed, arm, epoch):
-    if arm not in ('R', 'S') or epoch < 0 or not index:
+    if arm not in ('R', 'S', 'U') or epoch < 0 or not index or (arm == 'U' and seed != 17):
         raise ContractError('Invalid sampling arm/epoch/index')
-    rng = np.random.Generator(np.random.PCG64(seed_for(seed, arm, epoch, 'indices')))
+    rng = np.random.Generator(np.random.PCG64(seed_for(seed, 'S' if arm == 'U' else arm, epoch, 'indices')))
     if arm == 'R':
         return rng.permutation(len(index)).astype(np.int32)
-    weights = np.array([2. if r['target'] else 1. for r in index])
+    weights = np.ones(len(index)) if arm == 'U' else np.array([2. if r['target'] else 1. for r in index])
     return rng.choice(len(index), len(index), replace=True, p=weights/weights.sum()).astype(np.int32)
 
 
@@ -212,7 +212,7 @@ class FiniteEpochLoader:
         folder.mkdir(parents=True, exist_ok=True)
         path = folder/f'epoch{self.epoch+1:03d}.npz'
         np.savez_compressed(path, consumed=np.array(self.consumed, dtype=np.int32))
-        return {'epoch': self.epoch+1, 'arm': self.arm, 'seed': self.seed,
+        report = {'epoch': self.epoch+1, 'arm': self.arm, 'seed': self.seed,
                 'algorithm': ALGORITHM, 'index_sha256': canonical_hash(self.index),
                 'consumed_sha256': sha256(path), 'worker_exit': self.worker_exit,
                 'anchor': describe(self.index, self.consumed),
@@ -222,3 +222,6 @@ class FiniteEpochLoader:
                 'histogram': {'width_edges_px': [8, 16], 'height_edges_px': [32, 64],
                               'right_closed': True, 'coordinate_space': 'augmented input pixels'},
                 'lineage_limit': 'source reads and final boxes; no per-GT survival attribution'}
+        if self.arm == 'U':
+            report.update(indices_rng_scope='S', replacement=True, target_weight=1, other_weight=1)
+        return report

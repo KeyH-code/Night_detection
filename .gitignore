@@ -33,6 +33,7 @@
 _netrc
 .git-credentials
 /credentials.json
+/configs/gpu.local.json
 
 # Python/tool caches and generated logs; do not ignore maintained tests or reports.
 __pycache__/

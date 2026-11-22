@@ -280,7 +280,8 @@ class TinyLoader:
 
 
 @pytest.mark.parametrize('dev_only', [False, True])
-def test_actual_s3_loop_completed_epoch_resume_matches_continuous_pending_gradients_and_rng(tmp_path, monkeypatch, dev_only):
+@pytest.mark.parametrize('arm', ['R', 'U'])
+def test_actual_s3_loop_completed_epoch_resume_matches_continuous_pending_gradients_and_rng(tmp_path, monkeypatch, dev_only, arm):
     import copy
     import random
     import numpy as np
@@ -323,7 +324,7 @@ def test_actual_s3_loop_completed_epoch_resume_matches_continuous_pending_gradie
         if dev_only:
             from source_contract import S3_EVALUATION
             t.source_identity['evaluation_policy'] = S3_EVALUATION
-        t.s3_contract, t.s3_arm = {}, 'R'
+        t.s3_contract, t.s3_arm = {}, arm
         t.s3_policy = SelectionPolicy(load_rules(root/'RULES.md'), reference_at(root), horizon=4)
         t.callbacks = {k: [] for k in ('on_train_start','on_train_epoch_start','on_train_batch_start',
                       'on_train_batch_end','on_train_epoch_end','on_model_save','on_fit_epoch_end','on_train_end')}

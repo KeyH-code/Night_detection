@@ -41,9 +41,9 @@ def runtime_identity(root=ROOT, config_path=None, arm='R', seed=17):
         import platform
         import yaml
         from train_source import config_at
-        config = config_at(config_path)
+        config = config_at(config_path, arm, seed)
         check_equal('new runtime experiment', 'source_s3', config['experiment'])
-        if arm not in ('R', 'S') or seed not in (17, 29, 43):
+        if arm not in ('R', 'S', 'U') or seed not in (17, 29, 43) or (arm == 'U' and seed != 17):
             raise ContractError('Unregistered runtime arm/seed')
         config['sampling']['arm'], config['training']['seed'] = arm, seed
         ready = root/'data/source_v1/READY.json'
@@ -74,6 +74,25 @@ def runtime_identity(root=ROOT, config_path=None, arm='R', seed=17):
                 'code_identity': {p: sha256(root/p) for p in paths}, 'packages': packages,
                 'platform': platform.system(), 'machine': platform.machine(),
                 'library_code': library, 'training_recipe_changed': True, 'frozen_data_changed': False}
+        if arm == 'U':
+            from source_control import validate_build, validate_u_runtime
+            profile = validate_build(root)
+            check_equal('U runtime config', profile['U_config_sha256'], canonical_hash(config))
+            for rel in ('scripts/source_control.py', 'configs/source_s3_control.json'):
+                body['code_identity'][rel] = sha256(root/rel)
+            body['control_profile_sha256'] = sha256(root/'configs/source_s3_control.json')
+            validate_u_runtime(body, profile)
+            import subprocess
+            import torch
+            driver = subprocess.check_output(['nvidia-smi', '--query-gpu=driver_version',
+                        '--format=csv,noheader'], text=True, encoding='utf-8').strip()
+            body['gate_numerics'] = {'driver': driver, 'cuda': torch.version.cuda,
+                'cudnn': torch.backends.cudnn.version(),
+                'deterministic_algorithms': torch.are_deterministic_algorithms_enabled(),
+                'cudnn_benchmark': torch.backends.cudnn.benchmark,
+                'cudnn_deterministic': torch.backends.cudnn.deterministic,
+                'matmul_tf32': torch.backends.cuda.matmul.allow_tf32,
+                'scope': 'at gate, before trainer initializes deterministic settings; legacy values not recorded'}
         return {**body, 'identity_sha256': canonical_hash(body)}
     for rel, expected in BASE_CODE.items():
         check_equal('v2 baseline ' + rel, expected, sha256(root/rel))
@@ -102,7 +121,7 @@ def main():
     p.add_argument('--expected-identity-sha256')
     p.add_argument('--identity-output', type=Path)
     p.add_argument('--config', type=Path)
-    p.add_argument('--arm', choices=['R', 'S'], default='R')
+    p.add_argument('--arm', choices=['R', 'S', 'U'], default='R')
     p.add_argument('--seed', type=int, choices=[17, 29, 43], default=17)
     args = p.parse_args()
     host_memory = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') if hasattr(os, 'sysconf') else 0

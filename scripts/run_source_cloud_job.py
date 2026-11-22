@@ -92,7 +92,7 @@ def main():
     p.add_argument('--preflight-receipt-sha256')
     p.add_argument('--checkpoint', type=Path)
     p.add_argument('--config', type=Path)
-    p.add_argument('--arm', choices=['R', 'S'], default='R')
+    p.add_argument('--arm', choices=['R', 'S', 'U'], default='R')
     p.add_argument('--seed', type=int, choices=[17, 29, 43], default=17)
     args = p.parse_args()
     root, job, output = args.root.resolve(), args.job_dir.resolve(), args.output.resolve()

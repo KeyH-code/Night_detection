@@ -46,12 +46,13 @@ def test_reference_once_weighted_probabilities_and_positive_background():
     assert sum(report['per_group_counts'].values()) == 4000
 
 
-def test_sampler_does_not_consume_global_random_state():
+@pytest.mark.parametrize('arm', ['R', 'S', 'U'])
+def test_sampler_does_not_consume_global_random_state(arm):
     from train_monitor import rng_state, restore_rng
     state = rng_state()
     expected = (random.random(), np.random.random(), torch.rand(3))
     restore_rng(state)
-    indices_for(index(), 43, 'S', 27)
+    indices_for(index(), 17, arm, 27)
     actual = (random.random(), np.random.random(), torch.rand(3))
     assert actual[:2] == expected[:2] and torch.equal(actual[2], expected[2])
 
@@ -105,15 +106,18 @@ def test_audit_wrapper_preserves_images_boxes_and_random_draws(tmp_path):
     assert len(a['_source_audit']['reads']) == 4
 
 
-def test_real_workers4_consume_exact_finite_epochs_replay_and_close_mosaic(tmp_path):
+@pytest.mark.parametrize('arm', ['S', 'U'])
+def test_real_workers4_consume_exact_finite_epochs_replay_and_close_mosaic(tmp_path, arm):
     from ultralytics.cfg import get_cfg
     ds = dataset(tmp_path/'data')
     records = index(16)
-    loader = FiniteEpochLoader(ds, records, 17, 'S', batch_size=4, workers=4, pin_memory=False)
+    loader = FiniteEpochLoader(ds, records, 17, arm, batch_size=4, workers=4, pin_memory=False)
     state = torch.get_rng_state().clone()
     loader.set_epoch(0)
     first = [b['img'].clone() for b in loader]
     report = loader.finish(tmp_path/'evidence')
+    if arm == 'U':
+        assert report['indices_rng_scope'] == 'S' and report['target_weight'] == report['other_weight'] == 1
     assert report['anchor']['slots'] == 16 and report['all_source_reads']['slots'] == 64
     assert len(report['worker_exit']) == 4 and all(not w['alive'] and w['exitcode'] == 0 for w in report['worker_exit'])
     assert torch.equal(state, torch.get_rng_state())
@@ -128,5 +132,23 @@ def test_real_workers4_consume_exact_finite_epochs_replay_and_close_mosaic(tmp_p
     closed = loader.finish(tmp_path/'closed')
     assert closed['all_source_reads']['slots'] == 16
     assert sum(closed['final_class_gt'].values()) == 16
-    assert np.array_equal(np.load(tmp_path/'closed/epoch091.npz')['consumed'], indices_for(records, 17, 'S', 90))
+    assert np.array_equal(np.load(tmp_path/'closed/epoch091.npz')['consumed'], indices_for(records, 17, arm, 90))
     loader.close()
+
+
+def test_u_uniform_replacement_uses_s_stream_explicit_probabilities_and_keeps_all_images_positive():
+    from source_sampling import seed_for
+    records = index(); total = np.zeros(4000, dtype=int)
+    for epoch in range(100):
+        u = indices_for(records, 17, 'U', epoch)
+        oracle = np.random.Generator(np.random.PCG64(seed_for(17, 'S', epoch, 'indices'))).choice(
+            4000, 4000, replace=True, p=np.ones(4000)/4000).astype(np.int32)
+        assert np.array_equal(u, oracle)
+        assert len(u) == 4000 and u.min() >= 0 and u.max() < 4000 and len(set(u)) < 4000
+        total += np.bincount(u, minlength=4000)
+    assert total.min() > 0 and total[:922].sum()/total.sum() == pytest.approx(922/4000, abs=.003)
+    assert not np.array_equal(indices_for(records, 17, 'U', 0), indices_for(records, 17, 'U', 1))
+    # Target flags cannot influence U, while S deliberately uses them.
+    flipped = [{**r, 'target': not r['target']} for r in records]
+    assert np.array_equal(indices_for(records, 17, 'U', 0), indices_for(flipped, 17, 'U', 0))
+    with pytest.raises(ContractError): indices_for(records, 29, 'U', 0)

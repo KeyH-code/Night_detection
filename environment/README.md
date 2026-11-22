@@ -17,7 +17,11 @@
 
 固定权重的单用途评价用`evaluate.py --weights <权重> --weights-sha256 <外部SHA> --ready-sha256 <READY外部SHA> --purpose source_train --output <新结果目录>`；可用`--reference <既有best_dev_metrics.json>`直接生成对照，不重跑dev。冻结数据只读，标签缓存和复制数据在仓库外临时目录，结果不复制权重/图片。
 
-以后云端每轮完整train观察结果在train/train_metrics.csv与train/train_monitor.json，取回正式证据时必须包含这两份文件；启动器核对train/dev轮次覆盖，缺失不能晋升完成/预检通过。先在同一实例预检实测开销，不使用本机batch1耗时外推100轮账单。
+source_a兼容入口的每轮完整train观察结果在train/train_metrics.csv与train/train_monitor.json。S3使用已审dev_only_local_final_v1：每轮完整dev，train推理在本地，不能要求或伪造云端train_metrics.csv；启动器按profile核对覆盖。取回仍须包含完整train_monitor/开发轨迹与角色记录。先在同一实例预检实测开销，不使用本机batch1耗时外推100轮账单。
+
+U控制臂本地核验入口为`python scripts/source_control.py verify --output <仓库外核验文件.json>`，它只核验冻结train/dev、原R/S封存文件与200轮索引、当前精确增量，无模型推理或训练。新Linux运行仍须U自己的runtime、完整两轮预检和runner收据；本地回归不授权连接云端。新增gate_numerics记录门禁时的驱动/cuDNN/后端状态，它发生在trainer设置确定性之前；旧R/S没有该完整快照，不能宣称跨实例逐位数值复现。
+
+U正式训练及完整本地评价后，使用`python scripts/source_control.py compare --u-run runs/a_008/train --output runs/s3_17`产生独立control结果并更新该目录索引；旧comparison不覆盖。缺U正式封存、完整本地评价或兼容性条件时拒绝，不能将旧R/S改名成第三臂。
 
 ## 诊断
 

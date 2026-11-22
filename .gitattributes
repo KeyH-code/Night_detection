@@ -5,3 +5,11 @@
 *.yaml text eol=lf
 *.json text eol=lf
 *.lock text eol=lf
+# Preserve the checkout bytes bound by the daytime experiment seals.
+/RULES.md text eol=crlf
+/scripts/evaluate.py text eol=crlf
+/scripts/source_cloud_gate.py text eol=crlf
+/configs/source_s3.yaml text eol=crlf
+/configs/rerank.json text eol=crlf
+/configs/source_s3_control.json text eol=crlf
+/specs/s3/plan.md text eol=crlf

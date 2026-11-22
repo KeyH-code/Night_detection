@@ -128,19 +128,20 @@ identity={'fixture':'observation'}
 
 @pytest.mark.parametrize('mode', ['formal', 'resume'])
 @pytest.mark.parametrize('bad', ['legacy', 'arm', 'counts', 'profile'])
-def test_s3_cli_rejects_old_or_other_arm_preflight_before_subprocess(tmp_path, mode, bad):
+@pytest.mark.parametrize('arm', ['R', 'U'])
+def test_s3_cli_rejects_old_or_other_arm_preflight_before_subprocess(tmp_path, mode, bad, arm):
     import subprocess
     runner = Path(__file__).resolve().parents[2]/'scripts/run_source_cloud_job.py'
     receipt = {'status':'passed','runtime_identity_sha256':'new-runtime','runner_sha256':sha256(runner)}
     if bad != 'legacy':
         from source_contract import S3_EVALUATION
-        receipt.update(experiment='source_s3', arm_seed=['S',17] if bad == 'arm' else ['R',17],
+        receipt.update(experiment='source_s3', arm_seed=['S',17] if bad == 'arm' else [arm,17],
                        full_preflight=[64,32,2,2] if bad == 'counts' else [4000,500,2,100],
                        evaluation_policy='old_full_train' if bad == 'profile' else S3_EVALUATION)
     path = tmp_path/'receipt.json'; write_json(path, receipt)
     result = subprocess.run([sys.executable,str(runner),mode,'--root',str(tmp_path),
         '--job-dir',str(tmp_path/'job'),'--output',str(tmp_path/'output'),
-        '--config',str(tmp_path/'configs/source_s3.yaml'),'--arm','R','--seed','17',
+        '--config',str(tmp_path/'configs/source_s3.yaml'),'--arm',arm,'--seed','17',
         '--expected-identity-sha256','new-runtime','--expected-runner-sha256',sha256(runner),
         '--preflight-receipt',str(path),'--preflight-receipt-sha256',sha256(path)],
         capture_output=True,text=True,encoding='utf-8')

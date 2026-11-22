@@ -153,6 +153,8 @@ cloud:
   min_free_disk_gib: 40
   min_total_disk_gib: 46
 sampling:
+  # --arm U --seed 17 resolves to uniform weights 1/1 and indices_rng_scope=S.
+  # R/S resolved values and their original RNG namespaces stay unchanged.
   arm: R
   algorithm: small_thin_union_weighted_v1
   target_weight: 2

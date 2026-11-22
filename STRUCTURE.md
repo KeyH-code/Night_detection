@@ -4,15 +4,16 @@
 
 | 位置 | 用途 | 允许内容 | 命名 |
 |---|---|---|---|
-| 根目录 | 项目入口 | README.md、AGENTS.md、STRUCTURE.md、RULES.md、plan.md、Git规则 | 固定短名 |
+| 根目录 | 项目入口 | README.md、AGENTS.md、STRUCTURE.md、RULES.md、GPU.md、plan.md、Git规则 | 固定短名 |
 | specs/ | 阶段文档 | 每个计划阶段单独建子目录；根目录不散放阶段文件 | 小写阶段ID，如s0/、s2/、s10/；与根plan阶段表对应 |
 | specs/s0/、specs/s1/ | 已完成阶段索引 | review.md链接已有数据/首训证据，注明事后整理 | 固定短名review.md；不补造同期plan或复制原始记录 |
 | specs/s2/—specs/s10/ | 各阶段开发安排 | plan.md；有独立用途时增加roadmap.md、changemap.md等，职责见下表 | 固定短名；s2已执行待阶段复核，s3已审、本地实现/回归完成，s4—s10为待细化框架；不机械创建空文档 |
-| scripts/ | 活动实现 | 数据、训练、校验、打包入口及共用模块 | 小写；必要时下划线；不加临时时间或实例端口 |
+| scripts/ | 活动实现 | 数据、训练、校验、打包入口及共用模块；`gpu.py` 是本机 BitaHub 运维入口，`gpu_queue.py` 接续平台排队和已批准的 scale_003 训练，不随训练包部署 | 小写；必要时下划线；不加临时时间或实例端口 |
+| tests/ | 本机运维回归 | `test_gpu.py`、`test_gpu_queue.py` 覆盖开关机、预算、资源身份、单次排队与产物校验；不随训练包部署 | test_<功能>.py |
 | tests/data/ | 数据回归 | 归档安全、框转换、分组、冻结身份 | test_<功能>.py |
 | tests/train/ | 训练回归 | 白名单、选模、续训、资源、运行和发布边界 | test_<功能>.py |
-| tests/train/diagnose/ | 固定权重诊断回归 | 原生匹配/导出、工作点、尺寸、风险组区间与审核身份与抽查/自动草稿边界 | test_<功能>.py；完整pytest递归覆盖，训练包顶层glob不带入本机诊断回归 |
-| configs/ | 配置 | 类别映射、实验参数、README.md参数说明 | 按功能/实验命名；JSON/YAML |
+| tests/train/diagnose/ | 本机诊断和复核器回归 | 原生匹配/导出、工作点、尺寸、风险组区间、审核及固定 R 复核器的裁剪、分组和选轮 | test_<功能>.py；完整 pytest 递归覆盖，训练包顶层 glob 不带入本机回归 |
+| configs/ | 配置 | 类别映射、实验参数、README.md参数说明；`gpu.local.json` 是本机实例、账号和 SSH 绑定，不入 Git 或训练包 | 按功能/实验命名；JSON/YAML；本机绑定用 `.local.json` |
 | environment/ | 环境 | 数据依赖、平台锁、安装入口 | 按平台/用途；旧有效锁名保留 |
 | data/soda10m/ | 数据 | 下表限定内容 | 数据集/版本/用途分层 |
 | runs/a_001/ | 首训A基线 | 一份原始训练记录、代码/配置/环境快照、权重及清单；不等于最终A已冻结 | 实验名_序号；如 a_001 |
@@ -31,20 +32,24 @@
 |---|---|
 | README.md | 当前状态摘要、数据/权重/报告等导航 |
 | AGENTS.md | Agent行为、留存、编码及执行边界 |
+| [GPU.md](GPU.md) | GPU 使用原则与 BitaHub 开发机操作入口；长期维护，具体参数和实验安排归当前任务 |
 | STRUCTURE.md | 维护目录的职责、允许内容与命名模式 |
 | RULES.md | 实验指标、保护、证据、选模、停止及冻结标准和依据；长期留存，不是临时审核材料 |
 | plan.md | 全项目目标、范围、阶段状态、衔接、文档导航和实验矩阵 |
 | specs/s<编号>/plan.md | 该阶段目标、输入、实施步骤、文件范围、验证、产物、失败分支和审核状态；引用RULES |
 | specs/s<编号>/roadmap.md | 可选；复杂阶段内部的里程碑、顺序和依赖，不复制根plan路线或plan任务正文 |
 | specs/s<编号>/changemap.md | 可选；拟改文件/接口、变更原因、引用影响和验证对应关系；简单改动合入阶段plan |
+| specs/s3/rerank.md | 固定 R 的行人复核器实验方案；样本、模型、同池对照和继续条件 |
 | specs/s3/scale.md | 行人分辨率专项路线、训练尺度对照与执行准备 |
+| specs/s3/tricycle.md | 三轮车专项方案、预算、验证顺序和锁定五类的保护要求 |
+| specs/s3/replica.md | 原 A 的 seed 29/43 配方、云自动执行计划、预算与验证边界 |
 | specs/s<编号>/review.md | 已完成阶段的证据索引、退出结论及必要限制；无同期计划时明确事后整理，不替代reports或runs |
 
 后续实验/图目录行描述生成模式，不表示这些目录或结果已经存在。只有实际形成可复查证据时创建；本次规则与规划不预建实验目录或空报告。
 
 `plan.md`维护全项目路线和阶段衔接；`specs/`按阶段组织具体安排；`RULES.md`定义验收标准；`reports/`记录执行后的有效结论。阶段文档不兼作启动prompt、操作流水或原始实验存储。每个职责只有一个主要位置，使用链接衔接，不通过复制正文凑齐文件。
 
-当前S0—S10各有目录：S0/S1为事后证据索引，S2计划已审核通过并进入实施，S3采样对照计划已审、本地实现与回归完成，S4—S10仍须在进入阶段前结合前置结果细化。当前不需要独立roadmap/changemap，不创建空模板；阶段建档不表示其他阶段执行已获授权。
+当前S0—S10各有目录：S0/S1为事后证据索引，S2计划已审核通过并进入实施，S3采样对照计划已审、本地实现与回归完成，S4—S10仍须在进入阶段前结合前置结果细化。S3原采样配方保留在plan.md，按优先级推进的行人错误排查归[roadmap.md](specs/s3/roadmap.md)。其他阶段按实际用途扩展，不创建空模板。
 
 ## 数据
 
@@ -77,6 +82,8 @@
 ## 命名
 
 `scripts/diagnose.py`是固定权重source_train/dev诊断入口，复用evaluate.py及source_contract.py，不调用Trainer；`scripts/detection_metrics.py`仅做离线匹配、PR/工作点、错误/切片和风险组统计。RULES门槛运行时读取，不在新配置另设一套标准。
+
+`scripts/rerank.py` 是固定 R 行人复核器的本机预检、训练和同池评估入口。`configs/rerank.json` 只保留纳入排除的训练侧疑点和审核来源。实际执行使用新 `runs/rerank_<编号>/`，如 `runs/rerank_001/`。`run.json` 记录身份、分组和逐轮验证，`best.pt`、`last.pt` 保存复核器权重，`source_dev/` 保存 `scores.jsonl.gz`、`pr.npz` 和 `metrics.json`，`manifest.json` 与 `code/` 保留产物核验和实际运行代码。原始图像与 R 预测只引用源路径，预检无持久输出。
 
 固定诊断按runs/<实验>_diag/组织：根目录run.json/protocol.json/manifest.json绑定身份，train/和dev/保存objects.jsonl.gz、matches.jsonl.gz、pr.npz、metrics.json及原生指标native.json；根目录workpoints.json、comparison.csv、slices.csv、intervals.json、errors.json和quality.json记录离线数值与规则缺口，trace.jsonl.gz保留必要候选链与全扫描摘要。objects用稀疏正IoU边保存原生输入坐标下的数值，保护离线匹配边界。
 
@@ -114,10 +121,80 @@ checkpoint_roles.json区分best、diagnostic、last；零合格允许缺best，�
 
 正式run取回后，根transfer.json记录云端来源、封存manifest/传输包SHA、文件数及下载校验状态，job/保存最终运行/资源日志，environment/保存实际环境。逐个训练文件的身份以train/manifest.json为主，transfer.json不重复维护该清单，也不代表本地完整评价完成。临时压缩包、下载清单和传输脚本放仓库外，用途结束后清理。
 
+a_008的preflight/留存通过的预检配方、收据和训练日志。deployment/留存影响正式启动的共享盘临时目录故障、修正和预算记录。两处均由transfer.json记录下载校验，预检权重和缓存留在正式run之外。
+
 本地收尾前将原云端封存清单原样保存在job/cloud_manifest.json，保留下载身份；train/manifest.json随后管理新增本地评价证据。最后一条run的job/cloud_completion.json记录两臂完成与云端进程/GPU核实，不代替平台关机或账单确认。配对结果使用runs/s3_<seed>/（如s3_17/），保存comparison.json/csv、逐臂intervals.json、采样汇总sampling.json/csv及绑定输入/代码的run.json；它是对照结果，不是新训练run。对应plots/s3_<seed>/的metrics.png、effects.png、sampling.png可用scripts/plot.py --source-pair重建。
 
 配对记录复核继续维护同一目录：transitions.json保存GT迁移及最终框的分数/IoU/匹配证据，同名csv是行人迁移GT的查阅简表；trajectory.csv/json保存原云端逐轮指标、描述性窗口及选模敏感性，不能伪装成逐轮逐GT预测或独立重复。trajectory.png用scripts/plot.py --trajectory重建。图表代码更替时，按实际被图引用的code/versions/<SHA前12位>/保存必要版本，不回写既有图所引用的代码快照。一次性统计程序仍放仓库外；机器证据与视觉/因果结论分开。
 
+errors.json维护同一配对的探索性工作点增量FP、逐IoU匹配/AP、IoU75迁移GT框误差，以及有明确来源/不确定性/原图索引的Agent案例观察；run.json绑定其输入和方法身份。不存图片副本或临时审核载体，原主指标/工作点保留。score.json保存定向R/U候选追踪的样本、权重、复现状态、关键候选分数及NMS保留证据，由同目录run.json收录，不保存密集预测张量。context.json记录固定权重的背景纹理对照、输入相等与扰动范围校验、候选及配对差，不保留处理图或缓存。contour.json记录固定权重的轮廓反差干预、原图最佳候选跟踪、逐像素核验及保持的原工作点，由同目录run.json收录。grid.json记录同位置分数和框的交叉配对、检测头布局校验、IoU分档及目标邻域汇总，索引归run.json，不保留密集输出。
+
+均匀有放回控制复用同一比较目录：compatibility.json留存实际旧/新身份、源码差异、200轮R/S逐项索引核验及本地回归身份，明确cloud_pending或后续状态；不是U训练或预检结果。control.json/csv仅在真实U正式封存及完整本地评价后生成，维护三臂表、S−U/U−R、条件区间及原云轨迹/本地last辅助；不覆盖原comparison。实现入口scripts/source_control.py，精确兼容配置configs/source_s3_control.json，长期回归tests/train/test_control.py；正式U仍按runs/<实验>/既有结构留存，不预建目录。
+
 固定 R 的输入尺度对照归 `runs/s3_17/scale.json`，保存权重及数据身份、三臂输入几何、逐目标覆盖和工作点迁移、六类 AP 及风险组区间。原图、权重和临时缩放图只引用冻结源或放在临时目录。
 
+`runs/s3_17/scale24_trace.json` 保存第 24 轮三模型行人对齐和候选重放证据。逐目标以图像 key 与冻结标签行号索引，记录 960 下的候选 IoU、行人分数、NMS 保留与工作点匹配，并引用 R80 原尺寸对照。仅保留分组结果、必要的候选及抑制证据和输入身份。原封存评价、权重和数据仍在原位置，临时重放脚本和密集张量不留存。
+
+`runs/s3_17/scale24_agreement.json` 保存同一末轮权重的跨尺度候选对照和深低分行人/骑行者分数。保留近阈值分段的 36 个框、全开发集复评计数、110 个目标的代表解码位置及候选分数、判定口径和身份。全量 640 临时输出、重放数据沙箱和探针代码随本轮清理。
+
+`runs/s3_17/scale24_riders.json` 保存冻结训练集的 12 组行人难正例、普通行人与标注骑行者对照。保留选样依据、配对 ID、代表框同位置分数、场景观察和身份校验。开发集只引用已定位的参考案例，原图和临时裁剪视图不复制留存。
+
+`scripts/rider_supervision.py` 复用原生分配与分类损失执行固定分类头对照。`runs/riders_<编号>/` 保存 `data.json` 的训练图与目标审核、实际代码和配置身份、每臂末轮权重和逐轮记录、原生开发评价、配对结果及清单。`train_probe.json` 记录已见监督目标的固定权重同框复核。审查裁图、缓存和联调数据只在临时目录。
+
+负例模式 `--negative` 在同一目录新增 `anchors.json` 保存经训练输入核验的教师位置及张量身份，`dev960/protected.json` 保存冻结解码通道的逐图校验值。`comparison.json` 另存共享阈值与规定精度工作点的骑行者双报统计。
+
+`runs/s3_17/rider_fp.json` 保存分类监督两臂固定阈值的背景与错类框迁移，以原生保留索引报告同一候选的分数和 NMS 抑制链。保留输入身份、逐框判断与局部观察，复用原实验清单，不留复查裁图或密集输出。
+
+`runs/s3_17/rider_negatives.json` 保存冻结训练集的骑行者双报难负例，记录筛查身份、候选级标签和框几何、待复核疑点、Agent 入选理由和入选框的原生保留索引。后续试验方案归 `specs/s3/roadmap.md`，原图、放大裁图和重放临时数据只在原处或临时目录。
+
+`runs/s3_17/scale_preflight.json` 记录尺度微调的本机短预检，包含 R80 初始化身份、样本白名单、实测显存、累积更新、实际学习率和预算外推。正式配方与四格评价见 [scale.md](specs/s3/scale.md)，短预检权重留在临时目录并随退出清理。
+
+`scripts/train_scale.py` 执行固定预算的双臂微调，`scripts/scale_eval.py` 执行四格评价及配对比较。`runs/scale_<编号>/` 例如 `scale_001/` 保留运行身份、实际代码和配方快照、两臂（`640/`、`960/`）的逐轮记录及末轮权重、`dev640/` 和 `dev960/` 的评价证据、`comparison.json` 和封存清单。分开训练与评价时，`training_manifest.json` 用于核验跨机转移的训练产物和训练环境；评价完成后仍保留。运行中进度在 `progress.json`，臂完成后由逐轮正式记录接续。白名单暂存、数据缓存和小样本联调留仓库外并随退出清理。
+
 `scripts/person_fusion.py` 是行人多视图融合的本机白天开发复现入口。无梯度，单方案只用同一 checkpoint；`a1` 保持 `a_001 best` 的 640 非行人输出，`r80` 保持 R80 的 960 非行人输出。`tests/train/diagnose/test_person_fusion.py` 保护合并、类别隔离、上限、镜像坐标和身份语义。`runs/scale_<编号>/` 的固定权重子型只留筛查摘要、最终候选及原生参照的比较、可复查的融合对象及必要身份，不存重复原图、权重或验证器临时目录。
+
+`scripts/tricycle_fusion.py` 用同一检测器复现三轮车视图对照，并在白天开发集只替换三轮车输出；`tests/train/diagnose/test_tricycle_fusion.py` 保护五类输出隔离、融合和输出上限。`runs/tricycle_<编号>/` 留基线诊断、完整筛查摘要、有效候选和锁定对照的比较、必要输出及清单；不存裁图、未入围重排器权重、重复原图或检测器权重。
+
+`runs/seed_<编号>/` 保留多视图跨种子推理的实际权重引用、训练配方身份、各臂逐图融合对象/匹配/PR、条件配对差及产物清单。一轮只读验证不复制权重、原图或中间视图，现有缓存引用原 run，临时编排和沙箱随任务清理。
+
+`scripts/seed_eval.py` 复用锁定行人、三轮车推理入口，对正式源 A 三种子生成上述 `runs/seed_<编号>/` 的原配方复验子型；`tests/train/diagnose/test_seed_eval.py` 保护角色绑定和过线判断。只读准备与现有其他 GPU 工作同时进行，设备繁忙时拒绝启动。
+
+`runs/views_<编号>/` 保留六类视图筛查的配方、原生与锁定对照、各臂结果与已有权重迁移检查；留必要对象和身份，不复制原图、权重或所有中间视图。
+
+`scripts/person_local.py` 在原配方三种子上比较行人局部视图和骑行者竞争。此类 `views_<编号>/` 的 `diagnosis.json` 记录对照漏检分解、误报及阈值上限，`screen.json` 记录各实验臂、切片和逐目标迁移，`comparison.json` 记录统一选臂和风险组配对差。仅入选方案按 seed 保存完整对象、匹配与 PR；原图和中间裁图预测不留存。
+
+`scripts/person_verify.py` 复用同一 `views_` 系列做训练侧几何校正和同检测器逐框复看；`geometry.json` 保存校正参数、内部组拆分和停止判断。`scripts/person_teacher.py` 测量冻结训练白名单上可配对的跨尺度软目标；信号子型 `runs/teacher_<编号>/targets.jsonl.gz` 按训练图和 GT 保存候选，`signal.json` 汇总支持。`scripts/train_teacher.py` 用这些信号训练普通／教师两臂；同系列的训练子型只保留每臂固定末轮权重、实际训练历史、`single640/` 与 `locked/` 的评价、配对比较、清单及代码身份。原图、输入沙箱和未用缓存不留。
+
+`scripts/person_pairs.py` 只读回放等召回对照与训练侧分数匹配对。`teacher_` 的配对子型以 `sample.json` 保存不看后续模型响应的候选与组划分，`review.json` 保存逐对 Agent 原图判断和理由，`comparison.json` 保存核准配对的固定权重响应、开发误报索引及区间。裁图只在仓库外供当轮复核。
+
+`scripts/person_phase.py` 是固定融合框、整图 960 密集查询的两臂推理入口。`views_` 该子型每粒种子的 `supports.jsonl.gz` 按封存的 `seed_002` 行人顺序保留四个查询分，足以重算排序；`screen.json` 与 `comparison.json` 记录各臂资格与配对区间，仅入围方案额外保存完整对象／匹配／PR。
+
+`scripts/source_endpoints.py` 在 `seed_` 系列比较同一轨迹的末轮和等权端点；`scripts/person_views.py` 在 `views_` 系列对照整图横向采样或暗部提亮的独立视图。`<配方>/<seed>/` 保存实际跑过的完整开发对象、匹配、PR、指标与输入身份；五类资格跨种子核验后才标记入选。端点平均失败权重由同种子原件可复建，成功的衍生 checkpoint 归对应 run。
+
+`scripts/person_prior.py` 在 `runs/prior_<编号>/` 保存训练侧行人分类行适配：`train.json` 给出互斥拟合／内部验证组的图像键；`adapter/<seed>/fit.json` 给出内部候选及停止理由，通过才生成 `model.pt` 和完整开发评价。`comparison.json` 记录各阶段实测范围，总清单绑定初始模型、官方预训练权重、数据与代码。
+
+`scripts/source_alias.py --check` 可在本机验证 COCO 别名只改变目标网络的行人行；Linux 单种子正式入口复用原 A 训练器和原配方检查，在实际运行目录封存 `initialization.json`、代码、日志、原始权重及清单。本机 `--check` 不训练、不生成候选权重。
+
+`scripts/alias_queue.py` 只提交一个显式单种子别名对照，读取实时卡价和余额，管理队列、平台截止时间、远端任务、取回和停机。`runs/alias_<编号>.queue.json` 绑定本单的预算、job、包、远端持久路径和实际收尾。取回后的 `alias_<编号>/run/` 存正式训练及预检，`job/` 存命令及原日志；失败仅下载必要故障凭据。`scripts/alias_eval.py` 在停机和下载校验后用 `dev/` 保存同权重九路及 640 对照、匹配和逐类门槛。
+
+`scripts/alias_series.py` 串接已测量时限的单 seed 云任务与关机后的本地复验；发现既有收据不会重复开机。按 29、17、43 顺序，任一粒五类未通过即停止。`alias_001/failure/preflight/` 的实测原件是后续云预算外推来源，不把它标成正式训练结果。
+
+`scripts/source_moments.py` 使用 `prior_` 的 `moments/<seed>/` 子型；仅用固定 256 个训练组的图像校准 BN 缓冲。`train.json` 保存采样身份，`calibration.json` 保存各层观测偏移、实际缓冲变化和参数隔离校验，评价复用分类行适配的同一完整开发协议。
+
+`scripts/person_neighbors.py` 以 `views_` 结构执行原框的同图邻人支持对照。训练侧固定规则筛查失败时，只存 `comparison.json` 与清单，不建立未执行的开发种子结果。
+
+`scripts/person_consistency.py` 的 `views_` 子型用 `fit.json` 保存训练／内部组索引、成员分数和几何特征的校准系数；`scripts/consensus_endpoint.py` 复用其系数与同粒权重原件，验证两个已登记因素的合用结果。两类都按已执行 `<配方>/<seed>/` 保存一次完整开发评价，不保留临时单视图输出和可由原件重建的失败中点权重。
+
+`scripts/alias_mean.py` 在 `seed_` 系列验证同一 seed 原训练与显式别名训练之间的单检查点平均，绑定两个亲本清单，并保存相对两条训练的配对差异。没有对应独立训练原件的 seed 不计入复验。
+
+`scripts/person_appearance.py` 在 `views_` 系列用各 seed 自身骨干训练候选框外观残差，`fit.json` 绑定校准参数、共享的训练组拆分与内部筛查，`metrics.json` 另记附加推理时间。`scripts/train_scene.py` 在 `runs/align_<编号>/` 用全量训练白名单做整景尺度适配，每种子 `train.json` 记录实际消费、轮次和更新数，`last.pt` 为固定末轮 EMA，`dev/` 为重载后完整评价；运行中 `resume.pt` 为完整轮恢复点，正式末轮重载校验后清理。
+
+`scripts/verify_scene.py` 是 `align_001` 的只读复算入口。默认由三粒种子的封存对象、白名单和规则重建验收，`--replay <seed> --scratch <外部目录>` 另外从原图和对应单份权重重放；不修改封存、不保留重复预测。
+
+`runs/align_001/17/freeze.json` 是 S4 确认后单独留存的冻结记录，绑定决定所在的 Git 提交和原实验清单，不回写训练时的 `manifest.json`。仓库内从 `specs/s4/plan.md` 查权重 SHA、适用类别和 S5 交接。
+
+`scripts/seed_train.py` 是原白天 A 的受限重复入口，`scripts/seed_queue.py` 是现有 BitaHub 实例的本机队列与收尾入口。`runs/replica_<编号>/` 形成后只保留逐 seed 权重与必要训练记录、清单和云交接收据；排队过程中的本机锁、部署副本与传输包不入 Git。
+
+24 轮配方按臂保留 `epoch08/ema.pt`、`epoch16/ema.pt` 及 `last.pt`，每个完整轮以 `last.pt` 恢复。第 8、16、24 轮统一使用 `epoch<两位轮数>/dev960/` 存放评价证据，例如 `epoch24/dev960/metrics.json`。`comparison.json` 的 `by_epoch` 对应各观测点，原 R80 参照只保存一次。`runs/s3_17/scale24_preflight.json` 保存本机预检与包身份。入口、命令和范围见[延长微调](specs/s3/scale.md#延长微调)。
+
+`runs/s3_17/scale24_queue.json` 保存本次排队、预算、控制器身份、平台 job、部署路径、训练交接和实际关机状态。`gpu_queue.py` 只更新这份收据，拒绝覆写后重复提交。控制台输出放仓库外临时目录；有效状态以收据为准。云端 `job/` 的命令、控制器代码、退出状态和训练日志在成功交接时取回 `runs/scale_003/job/`，与原训练清单分开。评价仍使用既有本机入口。

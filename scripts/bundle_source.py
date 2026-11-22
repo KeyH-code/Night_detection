@@ -31,10 +31,10 @@ def build(root, ready_hash, output, smoke_path=None, config_path=None):
                   'bundle_source.py', 'verify_source_bundle.py', 'source_release.py',
                   'source_cloud_gate.py', 'source_resources.py', 'run_source_cloud_job.py',
                   'evaluate.py', 'train_monitor.py', 'detection_metrics.py',
-                  'source_sampling.py', 'source_policy.py']
+                  'source_sampling.py', 'source_policy.py', 'source_control.py']
     for name in code_files:
         paths['scripts/' + name] = ROOT / 'scripts' / name
-    for relative in ['configs/source_a.yaml', 'configs/source_s3.yaml', 'RULES.md', 'specs/s3/plan.md',
+    for relative in ['configs/source_a.yaml', 'configs/source_s3.yaml', 'configs/source_s3_control.json', 'RULES.md', 'specs/s3/plan.md',
                      'runs/a_001/train/best_dev_metrics.json', 'runs/a_001/train/args.yaml', 'runs/a_001_diag/dev/metrics.json',
                      'runs/a_001_diag/slices.csv', 'environment/training.in',
                      'environment/requirements-linux.lock', 'environment/requirements-windows.lock',

@@ -55,6 +55,8 @@ def test_package_uses_current_layout_and_exact_data_whitelist(tmp_path, monkeypa
     assert 'source_a_kit/scripts/source_policy.py' in names
     assert 'source_a_kit/scripts/detection_metrics.py' in names
     assert 'source_a_kit/configs/source_s3.yaml' in names
+    assert 'source_a_kit/configs/source_s3_control.json' in names
+    assert 'source_a_kit/scripts/source_control.py' in names
     assert not any('diagnostic_review.py' in p or '/scripts/diagnose.py' in p for p in names)
     assert manifest['status'] == 'PACKAGED_PENDING_VALIDATION'
     assert manifest['active_config'] == 'configs/'+config_name
