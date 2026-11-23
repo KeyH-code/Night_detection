@@ -13,7 +13,7 @@ import detection_metrics as dm
 import night_accept as accept
 import night_adapt as adapt
 import night_train as train
-from night_contract import ROOT, _no_reparse, read_sealed_json
+from night_contract import POOL, POOL_MANIFEST, ROOT, _no_reparse, _records, read_sealed_json
 from source_contract import ContractError, canonical_hash, check_equal, read_json, sha256
 
 
@@ -36,7 +36,7 @@ def seed_assessments(runs):
 
 def verify(folder):
     folder = Path(folder).absolute()
-    if folder.parent != ROOT/'runs' or not re.fullmatch(r'(rank|replay|tail|repeat|presence|focus|style|long)_\d{3}', folder.name):
+    if folder.parent != ROOT/'runs' or not re.fullmatch(r'(rank|replay|tail|repeat|presence|focus|style|long|width)_\d{3}', folder.name):
         raise ContractError('Expected an S6 experiment folder in runs')
     _no_reparse(folder)
     seal_path = folder/'manifest.json'
@@ -74,12 +74,12 @@ def verify(folder):
     summaries, assessments = {}, {}
     comparisons = {k: {} for k in paired_root}
     saved = read_json(folder/'comparison.json')
-    check_equal('random control attribution', kind in ('tail','presence'), saved['D_is_same_training_mechanism'])
+    check_equal('random control attribution', kind in ('tail','presence','width'), saved['D_is_same_training_mechanism'])
     for seed in cfg['seeds']:
         phase = folder/str(seed)
         task = initial['e1'][seed]
         original = task['plan']
-        if kind in ('tail','presence'):
+        if kind in ('tail','presence','width'):
             selected = read_json(folder/'selection.json')
             new = selected['lists'][str(seed)]
             check_equal('no selection payload leakage',(False,False),
@@ -96,9 +96,17 @@ def verify(folder):
                             selected['feature_sha256'],['original','bright','flip'],994,False),
                             (sha256(feature),sha256(feature),payload['views'],payload['images_read'],payload['labels_read']))
                 keys,z=strategy.load_features(feature)
-                from night_tail import rank_quota
                 check_equal('complete score coverage order',keys,payload['keys'])
-                replay=rank_quota(keys,z,payload['scores'],task['slots']['d_input_slots'][:20],cfg['shortlist'],cfg['quotas'],first_score=True)
+                if kind=='width':
+                    from night_width import rank_width
+                    check_equal('sealed medium-width proxy','medium_width',payload['score_mode'])
+                    inventory=read_sealed_json(train.NIGHT,POOL_MANIFEST,protocol['data']['pool_images_sha256'],[])
+                    groups={r['key']:r['group_id'] for r in _records(inventory,POOL,994,images_only=True)}
+                    replay=rank_width(keys,z,payload['scores'],groups,task['slots']['selection_order'],
+                                      cfg['retained'],cfg['per_tail'],cfg['shortlist'])
+                else:
+                    from night_tail import rank_quota
+                    replay=rank_quota(keys,z,payload['scores'],task['slots']['d_input_slots'][:20],cfg['shortlist'],cfg['quotas'],first_score=True)
                 check_equal('replayed presence selection',replay,{k:new[k] for k in replay})
             check_equal('selected image-only record digest', new['records_sha256'], canonical_hash(new['records']))
             task = adapt.ratio_slot_task(seed, 20, adapt._day_keys(identity['source_train']), new['records'], old, task['slots'])

@@ -41,7 +41,7 @@ def score_presence(original, variants):
     return scores
 
 
-def capture(box, digest):
+def capture(box, digest, *, restricted_score=None):
     import cv2
     import torch
     import torchvision
@@ -78,10 +78,13 @@ def capture(box, digest):
                 raw, bright, mirror = (predict(im,v) for v in VIEWS)
             except ContractError as exc:
                 raise ContractError(f'Blind presence capture {k}: {exc}') from exc
-            result.append(score_presence(raw,[bright,mirror]).tolist())
+            keep = (score_presence(raw,[bright,mirror]) if restricted_score is None else
+                    restricted_score(raw,[bright,mirror],640/max(im.shape[:2])))
+            result.append(keep.tolist())
     check_equal('only approved pool images opened in frozen order',paths,read)
     print(json.dumps({'keys':list(pool.records),'scores':result,'views':VIEWS,'seconds':time.monotonic()-start,
-                      'images_read':len(read),'labels_read':False,'a_sha256':view.A_SHA,'capture':view.INFERENCE}),flush=True)
+                      'images_read':len(read),'labels_read':False,'a_sha256':view.A_SHA,'capture':view.INFERENCE,
+                      'score_mode':'presence' if restricted_score is None else 'medium_width'}),flush=True)
 
 
 def validate(cfg):
@@ -89,7 +92,7 @@ def validate(cfg):
                 tuple(cfg[k] for k in ('day_images','updates','quotas','shortlist','max_minutes')))
 
 
-def select(cfg,scratch):
+def blind_inputs(cfg,scratch, *, worker=__file__):
     from seed_eval import probe_gpu
 
     _, pair, old = adapt._config(cfg['pair_sha256'])
@@ -110,12 +113,21 @@ def select(cfg,scratch):
         selection=stage_selection(train.NIGHT,digest,box)
         env={**os.environ, 'YOLO_AUTOINSTALL':'false','WANDB_MODE':'disabled','TEMP':str(parent),'TMP':str(parent),
              'YOLO_CONFIG_DIR':str(parent),'PYTHONIOENCODING':'utf-8','PYTHONUTF8':'1'}
-        result=subprocess.run([sys.executable,'-B',str(Path(__file__).resolve()),'capture',str(box),digest],
+        result=subprocess.run([sys.executable,'-B',str(Path(worker).resolve()),'capture',str(box),digest],
                               cwd=parent, env=env, capture_output=True,text=True,encoding='utf-8',check=True,timeout=900)
         captured=json.loads(result.stdout.strip().splitlines()[-1])
     check_equal('blind capture identity and complete keys',(keys,list(VIEWS),994,False,protocol['source_a']['checkpoint_sha256']),
                 tuple(captured[k] for k in ('keys','views','images_read','labels_read','a_sha256')))
     scores=strategy._scores(keys,captured['scores'])
+    memo={'selection_labels_read':False,'selection_development_read':False,'images_sha256':digest,
+          'feature_sha256':seals['e1']['files']['features.npz']['sha256'],'image_staging_paths':len(selection['reads']),
+          'presence':captured}
+    return keys,z,scores,inv,draws,memo
+
+
+def select(cfg,scratch):
+    keys,z,scores,inv,draws,memo=blind_inputs(cfg,scratch)
+    digest=memo['images_sha256']
     chosen={}
     for seed in cfg['seeds']:
         d,base=([r['key'] for r in adapt.draw_records(k,seed,draws[k],digest,inv)] for k in ('d','e1'))
@@ -130,9 +142,7 @@ def select(cfg,scratch):
         chosen[seed]={**q,'records':records,'records_sha256':canonical_hash(records),'original_e1_overlap':len(set(q['keys'])&set(base)),
                       'd_overlap':len(set(q['keys'])&set(d)),'risk_groups':len({r['group_id'] for r in records})}
         print(f'Presence seed {seed}: {len(records)} valid blind selections, {chosen[seed]["original_e1_overlap"]} images shared with E1.',flush=True)
-    return {'lists':chosen,'selection_labels_read':False,'selection_development_read':False,'images_sha256':digest,
-            'feature_sha256':seals['e1']['files']['features.npz']['sha256'],'image_staging_paths':len(selection['reads']),
-            'presence':captured}
+    return {'lists':chosen,**memo}
 
 
 if __name__ == '__main__':
