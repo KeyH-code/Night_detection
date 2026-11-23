@@ -231,7 +231,7 @@ def _parent(cfg, tasks, pair_cfg, identity):
 def snapshot_sources(out, entrypoint):
     from night_run import CODE
 
-    if entrypoint not in ('night_rank.py', 'night_replay.py', 'night_tail.py'):
+    if entrypoint not in ('night_rank.py', 'night_replay.py', 'night_tail.py', 'night_repeat.py'):
         raise ContractError('Unregistered experiment entrypoint')
     (out/'code').mkdir()
     for name in sorted(set(CODE) | {entrypoint, 'night_rank.py', 'night_train.py', 'night_adapt.py', 'night_accept.py',

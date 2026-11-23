@@ -105,3 +105,19 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 ```powershell
 .venv-train/Scripts/python.exe -B scripts/night_tail.py --config-sha256 '<tail.json SHA-256>' --scratch '<项目外任务目录>' --output runs/tail_NNN
 ```
+
+### 同名单尾类曝光
+
+[`repeat.json`](repeat.json) 锁 [固定夜间百图的曝光对照](../specs/s6/repeat.md)。训练前半按 E1 原顺序，后半只依据这 100 张已获准训练图的标签确定加权重采样；白天和梯度更新数不变。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_repeat.py --config-sha256 '<repeat.json SHA-256>' --scratch '<项目外任务目录>' --output runs/repeat_NNN
+```
+
+### 新训练证据复算
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/verify_night.py runs/replay_002
+```
+
+对 `rank`、`replay`、`tail`、`repeat` 的正式封存读取清单、白名单与开发预测，不打开图片、标签内容或启动模型。同一命令可接多个不同 seed run；拒绝不同配方、代码、环境、评价或重复 seed。区分三种子点估计全过和证据完整的稳定恢复。
