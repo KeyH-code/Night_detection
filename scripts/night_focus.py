@@ -42,7 +42,7 @@ def validate(cfg):
                 tuple(cfg[k] for k in ('day_images','updates','positive_weight','negative_gain','hard_per_class','max_minutes')))
 
 
-def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform=None,rates=None,prefix_verify=None):
+def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform=None,rates=None,prefix_verify=None,target_only=False):
     from torch.nn.modules.batchnorm import _BatchNorm
     from ultralytics.nn.tasks import load_checkpoint
     from ultralytics.utils.loss import v8DetectionLoss
@@ -60,11 +60,15 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
     model.args=SimpleNamespace(**args)
     check_equal('frozen six classes', NAMES,list(model.names.values()))
     day_prefix=len(payloads['day'])
-    check_equal('same ordered day slots',list(payloads['day']),[d[0] for d,_ in plan[:day_prefix]])
-    check_equal('exact day whitelist',set(payloads['day']),{d[0] for d,_ in plan})
-    check_equal('exact night whitelist',set(payloads['night']),{n[0] for _,n in plan})
+    if target_only:
+        check_equal('no staged source or non-native intervention',(0,None,None),(day_prefix,transform,rates))
+        check_equal('only night image per microbatch',{1},{len(m) for m in plan})
+    else:
+        check_equal('same ordered day slots',list(payloads['day']),[d[0] for d,_ in plan[:day_prefix]])
+        check_equal('exact day whitelist',set(payloads['day']),{d[0] for d,_ in plan})
+    check_equal('exact night whitelist',set(payloads['night']),{m[-1][0] for m in plan})
     check_equal('original treatment exposure and size',(200,10,640,2000),
-                (original['updates'],original['accumulate'],original['size'],day_prefix))
+                (original['updates'],original['accumulate'],original['size'],len(plan) if target_only else day_prefix))
     acc=original['accumulate']; count=cfg['updates']
     check_equal('fit has exactly all planned gradient microbatches',count*acc,len(plan))
     if rates is None:
@@ -94,12 +98,12 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
         positive_counts.add_((target[1,:,3:5]>0).sum(dim=0))
         return focused_bce(scores,target,cfg['positive_weight'],cfg['negative_gain'],cfg['hard_per_class'])
 
-    focused=transform is None and rates is None
+    focused=transform is None and rates is None and not target_only
     if focused:
         loss_fn.bce=objective
     payload=payloads['day'] | payloads['night']
     trace=[]; seen=[]
-    mode='long' if rates is not None else 'focus' if focused else 'style'
+    mode='target' if target_only else 'long' if rates is not None else 'focus' if focused else 'style'
     for step in range(count):
         if time.monotonic() >= until:
             raise ContractError('Local focus run exceeded its time budget')
@@ -131,7 +135,7 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
             prefix_verify(trace)
         if (step+1)%10==0:
             print(f'{mode} train seed={seed} updates={step+1}/{count}',flush=True)
-    check_equal('exact focused microbatches',[[d[0],n[0]] for d,n in plan],seen)
+    check_equal('exact observed microbatches',[[item[0] for item in micro] for micro in plan],seen)
     check_equal('exact focused updates',count,ema.updates)
     supports=positive_counts.cpu().tolist()
     if focused and not all(supports):
@@ -149,7 +153,8 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
     check_equal('EMA exact reload',True,all(torch.equal(v.float(),loaded.state_dict()[k].float()) for k,v in final.state_dict().items()))
     return dest,{'updates':count,'skipped_updates':0,'bn_frozen_buffers':len(bn),'trace':trace,'microbatches':seen,
                  'augment_schedule_sha256':canonical_hash(plan),'initializer_sha256':sha256(train.CHECKPOINT),
-                 'counts':{k:dict(Counter(row[i] for row in seen)) for i,k in enumerate(('source','night'))},
+                 'counts':{'source':{} if target_only else dict(Counter(row[0] for row in seen)),
+                           'night':dict(Counter(row[-1] for row in seen))},
                  'focus_classes':[3,4] if focused else [],'focus_night_positive_anchors':supports,
                  'seconds':time.monotonic()-started,
                  'peak_torch_allocated_bytes':torch.cuda.max_memory_allocated(),'peak_torch_reserved_bytes':torch.cuda.max_memory_reserved(),

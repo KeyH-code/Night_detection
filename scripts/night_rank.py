@@ -232,7 +232,7 @@ def snapshot_sources(out, entrypoint):
     from night_run import CODE
 
     if entrypoint not in ('night_rank.py', 'night_replay.py', 'night_tail.py', 'night_repeat.py', 'night_presence.py',
-                          'night_focus.py', 'night_style.py', 'night_long.py', 'night_width.py'):
+                          'night_focus.py', 'night_style.py', 'night_long.py', 'night_width.py', 'night_target.py'):
         raise ContractError('Unregistered experiment entrypoint')
     (out/'code').mkdir()
     for name in sorted(set(CODE) | {entrypoint, 'night_rank.py', 'night_train.py', 'night_adapt.py', 'night_accept.py',
@@ -244,7 +244,7 @@ def snapshot_sources(out, entrypoint):
             extra += ('night_tail.py', 'night_capture.py')
         for name in ('night_strategy.py', 'night_select.py', *extra):
             shutil.copyfile(ROOT/'scripts'/name, out/'code'/name)
-    if entrypoint in ('night_style.py','night_long.py'):
+    if entrypoint in ('night_style.py','night_long.py','night_target.py'):
         shutil.copyfile(ROOT/'scripts/night_focus.py', out/'code/night_focus.py')
 
 
@@ -308,9 +308,11 @@ def fit_run(raw, cfg, scratch, out, *, fit=None, entrypoint='night_rank.py', sel
                 rec = read_json(nt/'inputs.json')
                 check_equal('identical parent night inputs', task['slots']['input_slots'], [r['key'] for r in rec['records']])
                 check_equal('narrow grant', (seed, 'e1', grant_sha), (rec['seed'], rec['arm'], rec['grant_sha256']))
-                ds, _ = train._stage(train.SOURCE, box/'day-input', [day_by[k] for k in day_keys])
-                payloads = {'day': train.training_rows(box/'day-input', ds, 'source_train'),
-                            'night': train.training_rows(nt, rec['records'], 'night_pool')}
+                day_payload={}
+                if day_keys:
+                    ds,_=train._stage(train.SOURCE,box/'day-input',[day_by[k] for k in day_keys])
+                    day_payload=train.training_rows(box/'day-input',ds,'source_train')
+                payloads = {'day': day_payload, 'night': train.training_rows(nt, rec['records'], 'night_pool')}
                 check_equal('exact rank fit whitelists', (day_keys, task['slots']['input_slots']),
                             (list(payloads['day']), list(payloads['night'])))
                 write_json(phase/'inputs.json', {**rec, 'source_keys': day_keys, 'parent_sha256': sha256(path),
@@ -366,8 +368,9 @@ def main(*, kind='rank', fit=None, validate=None, select=None, description=__doc
     raw = read_sealed_bytes(ROOT, f'configs/{kind}.json', a.config_sha256, [])
     cfg = json.loads(raw)
     check_equal('registered experiment schema', 1, cfg['schema_version'])
-    if cfg['seeds'] not in ([43], [17], [29], [17, 29]) or not (1 <= cfg['day_images'] <= 2000 and 0 < cfg['max_minutes'] <= 60):
+    if cfg['seeds'] not in ([43], [17], [29], [17, 29]) or not (0 <= cfg['day_images'] <= 2000 and 0 < cfg['max_minutes'] <= 60):
         raise ContractError('Unregistered seed batch or local training budget')
+    check_equal('only target experiment may omit source payload',kind=='target',cfg['day_images']==0)
     out, scratch = a.output.absolute(), a.scratch.absolute()
     if validate is not None:
         validate(cfg)

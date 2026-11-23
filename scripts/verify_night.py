@@ -36,7 +36,7 @@ def seed_assessments(runs):
 
 def verify(folder):
     folder = Path(folder).absolute()
-    if folder.parent != ROOT/'runs' or not re.fullmatch(r'(rank|replay|tail|repeat|presence|focus|style|long|width)_\d{3}', folder.name):
+    if folder.parent != ROOT/'runs' or not re.fullmatch(r'(rank|replay|tail|repeat|presence|focus|style|long|width|target)_\d{3}', folder.name):
         raise ContractError('Expected an S6 experiment folder in runs')
     _no_reparse(folder)
     seal_path = folder/'manifest.json'
@@ -151,9 +151,16 @@ def verify(folder):
                 check_equal('exact immutable original E1 prefix', historical['trace'], fitted['trace'][:200])
                 plan,rates=extended_schedule(plan,old,cfg)
                 check_equal('uninterrupted original and extension LR phases',rates,[r['lr'] for r in fitted['trace']])
+            elif kind == 'target':
+                from night_target import night_batches
+                check_equal('original reference and only night gradient receipt',
+                            (canonical_hash(plan),False,{'source':0,'night':2000},{},[]),
+                            (fitted['original_schedule_sha256'],fitted['source_staged'],fitted['domain_gradient_batches'],
+                             fitted['counts']['source'],fitted['focus_classes']))
+                plan=night_batches(plan,verified_night)
             check_equal('exact gradients, fixed A and no skipped updates',
-                        (canonical_hash(plan), [[d[0], n[0]] for d,n in plan], identity['A_sha256'], 0,
-                         dict(Counter(n[0] for _,n in plan))),
+                        (canonical_hash(plan), [[item[0] for item in micro] for micro in plan], identity['A_sha256'], 0,
+                         dict(Counter(micro[-1][0] for micro in plan))),
                         (fitted['augment_schedule_sha256'], fitted['microbatches'], fitted['initializer_sha256'],
                          fitted['skipped_updates'], fitted['counts']['night']))
         metrics, eval_rows = {}, {}
