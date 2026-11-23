@@ -231,14 +231,15 @@ def _parent(cfg, tasks, pair_cfg, identity):
 def snapshot_sources(out, entrypoint):
     from night_run import CODE
 
-    if entrypoint not in ('night_rank.py', 'night_replay.py', 'night_tail.py', 'night_repeat.py'):
+    if entrypoint not in ('night_rank.py', 'night_replay.py', 'night_tail.py', 'night_repeat.py', 'night_presence.py'):
         raise ContractError('Unregistered experiment entrypoint')
     (out/'code').mkdir()
     for name in sorted(set(CODE) | {entrypoint, 'night_rank.py', 'night_train.py', 'night_adapt.py', 'night_accept.py',
                                     'source_policy.py', 'tricycle_fusion.py'}):
         shutil.copyfile(ROOT/'scripts'/name, out/'code'/name)
-    if entrypoint == 'night_tail.py':
-        for name in ('night_strategy.py', 'night_select.py'):
+    if entrypoint in ('night_tail.py', 'night_presence.py'):
+        extra = ('night_tail.py', 'night_capture.py') if entrypoint == 'night_presence.py' else ()
+        for name in ('night_strategy.py', 'night_select.py', *extra):
             shutil.copyfile(ROOT/'scripts'/name, out/'code'/name)
 
 
@@ -336,7 +337,7 @@ def fit_run(raw, cfg, scratch, out, *, fit=None, entrypoint='night_rank.py', sel
                       f'day macro delta={100*a["day_protection"]["macro_delta"]:.6f} pp; review={a["review"]}', flush=True)
             write_json(out/'comparison.json', {'candidate_minus_parent': accept.paired_recall(parent_pairs, policy),
                        'candidate_minus_historical_d': accept.paired_recall(pairs, policy),
-                       'D_is_same_training_mechanism': entrypoint == 'night_tail.py', 'assessments': assessments,
+                       'D_is_same_training_mechanism': entrypoint in ('night_tail.py','night_presence.py'), 'assessments': assessments,
                        'candidate_day_gate_relative_to_A': True})
     except BaseException as exc:
         error = f'{type(exc).__name__}: {exc}'

@@ -120,4 +120,12 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/verify_night.py runs/replay_002
 ```
 
-对 `rank`、`replay`、`tail`、`repeat` 的正式封存读取清单、白名单与开发预测，不打开图片、标签内容或启动模型。同一命令可接多个不同 seed run；拒绝不同配方、代码、环境、评价或重复 seed。区分三种子点估计全过和证据完整的稳定恢复。
+对 `rank`、`replay`、`tail`、`repeat`、`presence` 的正式封存读取清单、白名单与开发预测，不打开图片、标签内容或启动模型。同一命令可接多个不同 seed run；拒绝不同配方、代码、环境、评价或重复 seed。区分三种子点估计全过和证据完整的稳定恢复。
+
+### 共识选样
+
+[`presence.json`](presence.json) 锁[共识选样对照](../specs/s6/presence.md)。先在仅图沙箱采集冻结 A 的原图、提亮、镜向同类支持，再与已封存的 E1 特征一起排序；训练原生 200 更新，不改开发评价。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_presence.py --config-sha256 '<presence.json SHA-256>' --scratch '<项目外任务目录>' --output runs/presence_NNN
+```

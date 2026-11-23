@@ -226,6 +226,8 @@ errors.json维护同一配对的探索性工作点增量FP、逐IoU匹配/AP、I
 
 [`specs/s6/repeat.md`](specs/s6/repeat.md) 维护同名单尾类曝光对照，`configs/repeat.json` 与 `scripts/night_repeat.py` 锁白名单、已选标注的使用和两段采样；`runs/repeat_<编号>/` 留同一百图的实际重复次数、训练和开发证据。长期回归在 `tests/train/test_night_repeat.py`。
 
+[`specs/s6/presence.md`](specs/s6/presence.md) 维护尾类共识选样对照。`configs/presence.json`／`scripts/night_presence.py` 用 A 的仅图跨视图配对生成分数；实际 `runs/presence_<编号>/` 留复算分数、名单和训练指标，不重复归档特征、图或标签。长期回归在 `tests/train/test_night_presence.py`。
+
 `scripts/seed_train.py` 是原白天 A 的受限重复入口，`scripts/seed_queue.py` 是现有 BitaHub 实例的本机队列与收尾入口。`runs/replica_<编号>/` 形成后只保留逐 seed 权重与必要训练记录、清单和云交接收据；排队过程中的本机锁、部署副本与传输包不入 Git。
 
 24 轮配方按臂保留 `epoch08/ema.pt`、`epoch16/ema.pt` 及 `last.pt`，每个完整轮以 `last.pt` 恢复。第 8、16、24 轮统一使用 `epoch<两位轮数>/dev960/` 存放评价证据，例如 `epoch24/dev960/metrics.json`。`comparison.json` 的 `by_epoch` 对应各观测点，原 R80 参照只保存一次。`runs/s3_17/scale24_preflight.json` 保存本机预检与包身份。入口、命令和范围见[延长微调](specs/s3/scale.md#延长微调)。

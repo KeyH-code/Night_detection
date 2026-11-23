@@ -19,7 +19,7 @@ from night_contract import POOL, POOL_MANIFEST, ROOT, _records, read_sealed_json
 from source_contract import ContractError, canonical_hash, check_equal, read_json, sha256, write_json
 
 
-def rank_quota(keys, vectors, scores, anchors, shortlist, quotas):
+def rank_quota(keys, vectors, scores, anchors, shortlist, quotas, *, first_score=False):
     order, ordered, cos, selected = strategy._geometry(keys, vectors, anchors)
     if (len(quotas) != 5 or type(shortlist) is not int or not all(type(x) is int and 0 < x <= shortlist for x in quotas)
             or len(keys)-len(anchors) < sum(quotas)):
@@ -39,7 +39,10 @@ def rank_quota(keys, vectors, scores, anchors, shortlist, quotas):
             candidates = lists[c] - chosen
             if not candidates:
                 raise ContractError(f'Tail class {c} shortage; no cross-class fallback')
-            i = min(candidates, key=lambda j: (-round(float(distance[j]), 12), -rounded[j,c], ordered[j]))
+            def ordering(j):
+                score = (-rounded[j,c], ordered[j])
+                return score if first_score and round_index < n//2 else (-round(float(distance[j]), 12), *score)
+            i = min(candidates, key=ordering)
             steps.append({'key': ordered[i], 'class_id': c, 'score': float(u[i,c]), 'distance': float(distance[i])})
             counts[c] += 1
             selected.append(i)

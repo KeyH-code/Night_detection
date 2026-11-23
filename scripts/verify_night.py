@@ -36,8 +36,8 @@ def seed_assessments(runs):
 
 def verify(folder):
     folder = Path(folder).absolute()
-    if folder.parent != ROOT/'runs' or not re.fullmatch(r'(rank|replay|tail|repeat)_\d{3}', folder.name):
-        raise ContractError('Expected a released runs/rank_NNN, replay_NNN, tail_NNN or repeat_NNN folder')
+    if folder.parent != ROOT/'runs' or not re.fullmatch(r'(rank|replay|tail|repeat|presence)_\d{3}', folder.name):
+        raise ContractError('Expected an S6 experiment folder in runs')
     _no_reparse(folder)
     seal_path = folder/'manifest.json'
     seal_sha = sha256(seal_path)
@@ -74,17 +74,32 @@ def verify(folder):
     summaries, assessments = {}, {}
     comparisons = {k: {} for k in paired_root}
     saved = read_json(folder/'comparison.json')
-    check_equal('random control attribution', kind=='tail', saved['D_is_same_training_mechanism'])
+    check_equal('random control attribution', kind in ('tail','presence'), saved['D_is_same_training_mechanism'])
     for seed in cfg['seeds']:
         phase = folder/str(seed)
         task = initial['e1'][seed]
         original = task['plan']
-        if kind == 'tail':
+        if kind in ('tail','presence'):
             selected = read_json(folder/'selection.json')
             new = selected['lists'][str(seed)]
-            check_equal('blind selection worker', (False, False, True, ['features.npz','scores.npz','metadata.json']),
-                        (selected['selection_labels_read'], selected['selection_development_read'],
-                         new['original_e1_replayed'], new['worker_reads']))
+            check_equal('no selection payload leakage',(False,False),
+                        (selected['selection_labels_read'],selected['selection_development_read']))
+            if kind == 'tail':
+                check_equal('blind selection worker',(True,['features.npz','scores.npz','metadata.json']),
+                            (new['original_e1_replayed'],new['worker_reads']))
+            else:
+                import night_strategy as strategy
+                payload=selected['presence']; root=ROOT/'runs/pool_002'
+                config=read_sealed_json(root,'manifest.json',pair['pool_manifest_sha256']['e1'],[])
+                feature=root/'features.npz'
+                check_equal('sealed feature and blind output identity',(config['files']['features.npz']['sha256'],
+                            selected['feature_sha256'],['original','bright','flip'],994,False),
+                            (sha256(feature),sha256(feature),payload['views'],payload['images_read'],payload['labels_read']))
+                keys,z=strategy.load_features(feature)
+                from night_tail import rank_quota
+                check_equal('complete score coverage order',keys,payload['keys'])
+                replay=rank_quota(keys,z,payload['scores'],task['slots']['d_input_slots'][:20],cfg['shortlist'],cfg['quotas'],first_score=True)
+                check_equal('replayed presence selection',replay,{k:new[k] for k in replay})
             check_equal('selected image-only record digest', new['records_sha256'], canonical_hash(new['records']))
             task = adapt.ratio_slot_task(seed, 20, adapt._day_keys(identity['source_train']), new['records'], old, task['slots'])
             check_equal('actual tail slots', selected['slots'][str(seed)], task['slots'])
