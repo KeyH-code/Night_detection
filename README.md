@@ -6,7 +6,7 @@
 
 **白天源模型 A 已按五类受限冻结。** 夜间零样本基线和后续百图对照共用 [`align_001/17/last.pt`](runs/align_001/17/last.pt)。在完整 500 张白天开发图和锁定多视图协议下，行人、骑行者、汽车、卡车、有轨车辆在三个种子上通过全部 15 项类别验收。行人召回（P≥75%）分别为 63.22%、60.74%、61.57%。[冻结决定与权重身份](specs/s4/plan.md) · [逐类结果和复算命令](reports/a.md#整景尺度适配三种子五类通过) · [夜间基线与百图对照准备](specs/s5/plan.md)
 
-**当前处于 S6 对照。** [随机臂 D](reports/night.md#百图随机臂)及 [E1/E2](reports/night.md#百图策略训练)完成本机百图开发对照，夜间仍缺卡车和有轨车辆。[末层排序](reports/night.md#双类末层排序)与[低照回放](reports/night.md#低照白天回放)均未入围，继续验证[尾类选样](specs/s6/tail.md)。[五类开发复评](reports/night.md#五类统一口径复评)不改旧口径判定；最终留出未启动。[整体进度](plan.md#阶段)。S2 诊断已执行，阶段结论仍待单独复核。
+**当前处于 S6 对照。** [随机臂 D](reports/night.md#百图随机臂)及 [E1/E2](reports/night.md#百图策略训练)完成本机百图开发对照，夜间仍缺卡车和有轨车辆。[末层排序](reports/night.md#双类末层排序)、[低照回放](reports/night.md#低照白天回放)和[尾类配额](reports/night.md#尾类配额)均未入围，继续验证[共识选样](specs/s6/presence.md)。[五类开发复评](reports/night.md#五类统一口径复评)不改旧口径判定；最终留出未启动。[整体进度](plan.md#阶段)。S2 诊断已执行，阶段结论仍待单独复核。
 
 <details><summary>白天历史记录（以下为当时状态）</summary>
 
