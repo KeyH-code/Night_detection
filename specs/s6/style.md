@@ -1,5 +1,7 @@
 # 频域回放
 
+**收尾：** [`style_001`](../../runs/style_001/manifest.json) 已完成并独立复算。[结果](../../reports/night.md#频域白天回放)为夜间三类达数值点、两个尾类未恢复和白天保护失败；收尾不扩种子。以下保留同期设计。
+
 **条件预案。** 若[原生难例损失](focus.md)不入围，固定 E1/43 的夜间百图和梯度曝光，另测一种**不改标签的白天域扩增**。原[低照回放](../../reports/night.md#低照白天回放)只统一乘亮度，既未增加两尾类召回，也不能模拟实际夜景的低频颜色和光照分布。[训练侧教师诊断](focus.md#下一方向的只读诊断)不支持直接仿照提亮或高分辨率的检测分数。改用已批准百图的实际夜景中低频幅度作为白天回放的外观参照，保留白天图的相位和目标坐标；这不是复制夜景目标或扩夜间标注。启发来自 [FDA（CVPR 2020）](https://openaccess.thecvf.com/content_CVPR_2020/html/Yang_FDA_Fourier_Domain_Adaptation_for_Semantic_Segmentation_CVPR_2020_paper.html)，非其语义分割设置复现。
 
 ## 固定实验
