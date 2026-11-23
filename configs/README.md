@@ -81,3 +81,11 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/night_adapt.py ratio-align --protocol-sha256 '<ratio.json SHA-256>' --pool-run runs/pool_NNN --pool-sha256 '<名单 manifest.json SHA-256>'
 .venv-train/Scripts/python.exe -B scripts/night_adapt.py ratio --protocol-sha256 '<ratio.json SHA-256>' --pool-run runs/pool_NNN --pool-sha256 '<名单 manifest.json SHA-256>' --arm e1 --random-count 40 --scratch '<项目外任务目录>' --output runs/e1_NNN
 ```
+
+### 分类排序适配
+
+[`rank.json`](rank.json) 锁定[低误报排序实验](../specs/s6/rank.md)的亲本清单、种子、白天回放和拟合参数。入口只使用封存 E1 的对应百图及其原白天训练顺序，不接受任意数据目录，开发评价使用合规的原生 640 和行人多视图。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_rank.py --config-sha256 '<rank.json SHA-256>' --scratch '<项目外任务目录>' --output runs/rank_NNN
+```

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "pair_sha256": "7ecab00157b3e265097a8502e41254c3e00010459e9d79584001ac9bb11e901e",
+  "parent_manifest_sha256": "b983a9ebe87fcde3f7847cd1334b7892045f3f62754f0e846a2cd4eed580add8",
+  "seeds": [43],
+  "day_images": 320,
+  "updates": 120,
+  "learning_rate": 0.003,
+  "hard_negatives": 32,
+  "day_penalty": 0.3,
+  "ridge": 3.0,
+  "max_minutes": 30
+}

@@ -216,6 +216,8 @@ errors.json维护同一配对的探索性工作点增量FP、逐IoU匹配/AP、I
 
 `configs/ratio.json` 锁定 [S6 单种子比例探索](specs/s6/plan.md#单种子比例探索)，既有选样与训练入口通过独立 `ratio` 模式执行。`runs/pool_004/` 的 `lists.json` 保存四份探索名单、排序证据和重合数，`ratio.json`、`run.json`、`code/`、`manifest.json` 绑定首版回放和读取边界，不复制特征或分数。策略训练同系列的新 run 用 `ratio` 身份区分，`comparison.json` 改记单 seed 相对 D 和同策略首版的两套配对；不是三种子复验结果。
 
+[`specs/s6/rank.md`](specs/s6/rank.md) 维护低误报排序的诊断、训练动机和取舍。`configs/rank.json` 绑定实验；`scripts/night_rank.py` 复用封存 E1 名单及已锁开发评价，只写独立 `runs/rank_<编号>/` 的输入、训练、末轮权重、开发输出、配对指标、实际代码/配置及清单。原图、标签和特征副本不保留；长期回归在 `tests/train/test_night_rank.py`。
+
 `scripts/seed_train.py` 是原白天 A 的受限重复入口，`scripts/seed_queue.py` 是现有 BitaHub 实例的本机队列与收尾入口。`runs/replica_<编号>/` 形成后只保留逐 seed 权重与必要训练记录、清单和云交接收据；排队过程中的本机锁、部署副本与传输包不入 Git。
 
 24 轮配方按臂保留 `epoch08/ema.pt`、`epoch16/ema.pt` 及 `last.pt`，每个完整轮以 `last.pt` 恢复。第 8、16、24 轮统一使用 `epoch<两位轮数>/dev960/` 存放评价证据，例如 `epoch24/dev960/metrics.json`。`comparison.json` 的 `by_epoch` 对应各观测点，原 R80 参照只保存一次。`runs/s3_17/scale24_preflight.json` 保存本机预检与包身份。入口、命令和范围见[延长微调](specs/s3/scale.md#延长微调)。
