@@ -120,7 +120,7 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/verify_night.py runs/replay_002
 ```
 
-对 `rank`、`replay`、`tail`、`repeat`、`presence`、`focus` 的正式封存读取清单、白名单与开发预测，不打开图片、标签内容或启动模型。同一命令可接多个不同 seed run；拒绝不同配方、代码、环境、评价或重复 seed。区分三种子点估计全过和证据完整的稳定恢复。
+对 `rank`、`replay`、`tail`、`repeat`、`presence`、`focus`、`style` 的正式封存读取清单、白名单与开发预测，不打开图片、标签内容或启动模型。同一命令可接多个不同 seed run；拒绝不同配方、代码、环境、评价或重复 seed。区分三种子点估计全过和证据完整的稳定恢复。
 
 ### 共识选样
 
@@ -136,4 +136,12 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 
 ```powershell
 .venv-train/Scripts/python.exe -B scripts/night_focus.py --config-sha256 '<focus.json SHA-256>' --scratch '<项目外任务目录>' --output runs/focus_NNN
+```
+
+### 频域白天回放
+
+[`style.json`](style.json) 锁[频域外观对照](../specs/s6/style.md)。已选的同微批夜间图仅为低频外观提供参照，不改该夜图、不改训练标签，也不直接输入候选池其他图。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_style.py --config-sha256 '<style.json SHA-256>' --scratch '<项目外任务目录>' --output runs/style_NNN
 ```

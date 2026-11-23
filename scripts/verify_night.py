@@ -36,7 +36,7 @@ def seed_assessments(runs):
 
 def verify(folder):
     folder = Path(folder).absolute()
-    if folder.parent != ROOT/'runs' or not re.fullmatch(r'(rank|replay|tail|repeat|presence|focus)_\d{3}', folder.name):
+    if folder.parent != ROOT/'runs' or not re.fullmatch(r'(rank|replay|tail|repeat|presence|focus|style)_\d{3}', folder.name):
         raise ContractError('Expected an S6 experiment folder in runs')
     _no_reparse(folder)
     seal_path = folder/'manifest.json'
@@ -129,6 +129,11 @@ def verify(folder):
                 check_equal('fixed focus classes and signal',([3,4],True),
                             (fitted['focus_classes'],len(fitted['focus_night_positive_anchors'])==2
                              and all(n>0 for n in fitted['focus_night_positive_anchors'])))
+            elif kind == 'style':
+                check_equal('style treatment exact exposures and original loss',
+                            ([],1000,[140,500],cfg['frequency'],cfg['transfer_strength']),
+                            (fitted['focus_classes'],fitted['source_style_exposures'],fitted['style_content_rows'],
+                             fitted['style_frequency'],fitted['style_strength']))
             check_equal('exact gradients, fixed A and no skipped updates',
                         (canonical_hash(plan), [[d[0], n[0]] for d,n in plan], identity['A_sha256'], 0,
                          dict(Counter(n[0] for _,n in plan))),
