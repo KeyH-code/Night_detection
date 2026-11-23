@@ -232,7 +232,7 @@ def snapshot_sources(out, entrypoint):
     from night_run import CODE
 
     if entrypoint not in ('night_rank.py', 'night_replay.py', 'night_tail.py', 'night_repeat.py', 'night_presence.py',
-                          'night_focus.py', 'night_style.py'):
+                          'night_focus.py', 'night_style.py', 'night_long.py'):
         raise ContractError('Unregistered experiment entrypoint')
     (out/'code').mkdir()
     for name in sorted(set(CODE) | {entrypoint, 'night_rank.py', 'night_train.py', 'night_adapt.py', 'night_accept.py',
@@ -242,7 +242,7 @@ def snapshot_sources(out, entrypoint):
         extra = ('night_tail.py', 'night_capture.py') if entrypoint == 'night_presence.py' else ()
         for name in ('night_strategy.py', 'night_select.py', *extra):
             shutil.copyfile(ROOT/'scripts'/name, out/'code'/name)
-    if entrypoint == 'night_style.py':
+    if entrypoint in ('night_style.py','night_long.py'):
         shutil.copyfile(ROOT/'scripts/night_focus.py', out/'code/night_focus.py')
 
 
@@ -364,7 +364,7 @@ def main(*, kind='rank', fit=None, validate=None, select=None, description=__doc
     raw = read_sealed_bytes(ROOT, f'configs/{kind}.json', a.config_sha256, [])
     cfg = json.loads(raw)
     check_equal('registered experiment schema', 1, cfg['schema_version'])
-    if cfg['seeds'] not in ([43], [17, 29]) or not (1 <= cfg['day_images'] <= 2000 and 0 < cfg['max_minutes'] <= 60):
+    if cfg['seeds'] not in ([43], [17], [29], [17, 29]) or not (1 <= cfg['day_images'] <= 2000 and 0 < cfg['max_minutes'] <= 60):
         raise ContractError('Unregistered seed batch or local training budget')
     out, scratch = a.output.absolute(), a.scratch.absolute()
     if validate is not None:

@@ -42,7 +42,7 @@ def validate(cfg):
                 tuple(cfg[k] for k in ('day_images','updates','positive_weight','negative_gain','hard_per_class','max_minutes')))
 
 
-def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform=None):
+def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform=None,rates=None,prefix_verify=None):
     from torch.nn.modules.batchnorm import _BatchNorm
     from ultralytics.nn.tasks import load_checkpoint
     from ultralytics.utils.loss import v8DetectionLoss
@@ -59,10 +59,18 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
     args=dict(model.args)
     model.args=SimpleNamespace(**args)
     check_equal('frozen six classes', NAMES,list(model.names.values()))
-    check_equal('same ordered day slots',list(payloads['day']),[d[0] for d,_ in plan])
+    day_prefix=len(payloads['day'])
+    check_equal('same ordered day slots',list(payloads['day']),[d[0] for d,_ in plan[:day_prefix]])
+    check_equal('exact day whitelist',set(payloads['day']),{d[0] for d,_ in plan})
     check_equal('exact night whitelist',set(payloads['night']),{n[0] for _,n in plan})
     check_equal('original treatment exposure and size',(200,10,640,2000),
-                (original['updates'],original['accumulate'],original['size'],len(plan)))
+                (original['updates'],original['accumulate'],original['size'],day_prefix))
+    acc=original['accumulate']; count=cfg['updates']
+    check_equal('fit has exactly all planned gradient microbatches',count*acc,len(plan))
+    if rates is None:
+        check_equal('unextended fit update budget',200,count)
+    else:
+        check_equal('extended original-native fit identity',(600,600,True,True),(count,len(rates),transform is None,prefix_verify is not None))
     for name,param in model.named_parameters():
         param.requires_grad_('.dfl.' not in name)
     bn={}
@@ -86,14 +94,17 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
         positive_counts.add_((target[1,:,3:5]>0).sum(dim=0))
         return focused_bce(scores,target,cfg['positive_weight'],cfg['negative_gain'],cfg['hard_per_class'])
 
-    if transform is None:
+    focused=transform is None and rates is None
+    if focused:
         loss_fn.bce=objective
     payload=payloads['day'] | payloads['night']
-    acc=original['accumulate']; count=cfg['updates']; trace=[]; seen=[]
+    trace=[]; seen=[]
+    mode='long' if rates is not None else 'focus' if focused else 'style'
     for step in range(count):
         if time.monotonic() >= until:
             raise ContractError('Local focus run exceeded its time budget')
-        lr=original['lr_end']+(original['lr_start']-original['lr_end'])*(1+math.cos(math.pi*step/(count-1)))/2
+        lr=(rates[step] if rates is not None else
+            original['lr_end']+(original['lr_start']-original['lr_end'])*(1+math.cos(math.pi*step/(count-1)))/2)
         for group in optimizer.param_groups:
             group['lr']=lr
         optimizer.zero_grad(set_to_none=True)
@@ -116,12 +127,14 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
             raise ContractError('AMP skipped focused update')
         ema.update(model)
         trace.append({'step':step+1,'lr':lr,'loss_terms':(sums/acc).cpu().tolist()})
+        if prefix_verify is not None and step+1==200:
+            prefix_verify(trace)
         if (step+1)%10==0:
-            print(f'{"focus" if transform is None else "style"} train seed={seed} updates={step+1}/{count}',flush=True)
+            print(f'{mode} train seed={seed} updates={step+1}/{count}',flush=True)
     check_equal('exact focused microbatches',[[d[0],n[0]] for d,n in plan],seen)
     check_equal('exact focused updates',count,ema.updates)
     supports=positive_counts.cpu().tolist()
-    if transform is None and not all(supports):
+    if focused and not all(supports):
         raise ContractError('No focused native positive signal in a registered class')
     for k,v in bn.items():
         check_equal('frozen BN '+k,True,torch.equal(model.state_dict()[k],v))
@@ -130,14 +143,14 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
     final=deepcopy(ema.ema).cpu().half().eval(); final.args=args
     if not all(torch.isfinite(v).all() for v in final.state_dict().values()):
         raise ContractError('Nonfinite focused checkpoint')
-    scope='fixed last nighttime classification loss focus' if transform is None else 'fixed last native loss with source input style'
+    scope=f'fixed last {mode} night adaptation'
     torch.save({'ema':final,'model':None,'epoch':count//10-1,'updates':count,'train_args':args,'scope':scope},dest)
     loaded,_=load_checkpoint(str(dest),device='cpu')
     check_equal('EMA exact reload',True,all(torch.equal(v.float(),loaded.state_dict()[k].float()) for k,v in final.state_dict().items()))
     return dest,{'updates':count,'skipped_updates':0,'bn_frozen_buffers':len(bn),'trace':trace,'microbatches':seen,
                  'augment_schedule_sha256':canonical_hash(plan),'initializer_sha256':sha256(train.CHECKPOINT),
                  'counts':{k:dict(Counter(row[i] for row in seen)) for i,k in enumerate(('source','night'))},
-                 'focus_classes':[3,4] if transform is None else [],'focus_night_positive_anchors':supports,
+                 'focus_classes':[3,4] if focused else [],'focus_night_positive_anchors':supports,
                  'seconds':time.monotonic()-started,
                  'peak_torch_allocated_bytes':torch.cuda.max_memory_allocated(),'peak_torch_reserved_bytes':torch.cuda.max_memory_reserved(),
                  'last_sha256':sha256(dest),'checkpoint_roles':{'last':'last.pt','best':{'path':'last.pt','selected_on_dev':False}}}

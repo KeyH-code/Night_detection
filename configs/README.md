@@ -120,7 +120,7 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/verify_night.py runs/replay_002
 ```
 
-对 `rank`、`replay`、`tail`、`repeat`、`presence`、`focus`、`style` 的正式封存读取清单、白名单与开发预测，不打开图片、标签内容或启动模型。同一命令可接多个不同 seed run；拒绝不同配方、代码、环境、评价或重复 seed。区分三种子点估计全过和证据完整的稳定恢复。
+对 `rank`、`replay`、`tail`、`repeat`、`presence`、`focus`、`style`、`long` 的正式封存读取清单、白名单与开发预测，不打开图片、标签内容或启动模型。同一命令可接多个不同 seed run；拒绝不同配方、代码、环境、评价或重复 seed。区分三种子点估计全过和证据完整的稳定恢复。
 
 ### 共识选样
 
@@ -144,4 +144,12 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 
 ```powershell
 .venv-train/Scripts/python.exe -B scripts/night_style.py --config-sha256 '<style.json SHA-256>' --scratch '<项目外任务目录>' --output runs/style_NNN
+```
+
+### 延长适配
+
+[`long.json`](long.json) 锁[原轨迹延长对照](../specs/s6/long.md)：从共同 A 重新启动，前 200 更新对比封存 E1 的逐步损失；只有前缀一致才执行已登记的后 400 更新。只评价末轮，不重选。若后续入围，每个重复种子分别用独立 run，不共用一个 45 分钟训练窗口。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_long.py --config-sha256 '<long.json SHA-256>' --scratch '<项目外任务目录>' --output runs/long_NNN
 ```

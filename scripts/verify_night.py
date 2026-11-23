@@ -36,7 +36,7 @@ def seed_assessments(runs):
 
 def verify(folder):
     folder = Path(folder).absolute()
-    if folder.parent != ROOT/'runs' or not re.fullmatch(r'(rank|replay|tail|repeat|presence|focus|style)_\d{3}', folder.name):
+    if folder.parent != ROOT/'runs' or not re.fullmatch(r'(rank|replay|tail|repeat|presence|focus|style|long)_\d{3}', folder.name):
         raise ContractError('Expected an S6 experiment folder in runs')
     _no_reparse(folder)
     seal_path = folder/'manifest.json'
@@ -134,6 +134,15 @@ def verify(folder):
                             ([],1000,[140,500],cfg['frequency'],cfg['transfer_strength']),
                             (fitted['focus_classes'],fitted['source_style_exposures'],fitted['style_content_rows'],
                              fitted['style_frequency'],fitted['style_strength']))
+            elif kind == 'long':
+                from night_long import extended_schedule
+                historical=adapt._json(paired_root['parent'],paired_seal['parent'],f'{seed}/train.json')
+                check_equal('verified original E1 first 200 steps',(200,400,canonical_hash(plan),canonical_hash(historical['trace'])),
+                            (fitted['baseline_updates'],fitted['additional_updates'],fitted['original_schedule_sha256'],
+                             fitted['exact_prefix_trace_sha256']))
+                check_equal('exact immutable original E1 prefix', historical['trace'], fitted['trace'][:200])
+                plan,rates=extended_schedule(plan,old,cfg)
+                check_equal('uninterrupted original and extension LR phases',rates,[r['lr'] for r in fitted['trace']])
             check_equal('exact gradients, fixed A and no skipped updates',
                         (canonical_hash(plan), [[d[0], n[0]] for d,n in plan], identity['A_sha256'], 0,
                          dict(Counter(n[0] for _,n in plan))),
