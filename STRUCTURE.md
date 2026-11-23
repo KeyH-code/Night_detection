@@ -218,6 +218,10 @@ errors.json维护同一配对的探索性工作点增量FP、逐IoU匹配/AP、I
 
 [`specs/s6/rank.md`](specs/s6/rank.md) 维护低误报排序的诊断、训练动机和取舍。`configs/rank.json` 绑定实验；`scripts/night_rank.py` 复用封存 E1 名单及已锁开发评价，只写独立 `runs/rank_<编号>/` 的输入、训练、末轮权重、开发输出、配对指标、实际代码/配置及清单。原图、标签和特征副本不保留；长期回归在 `tests/train/test_night_rank.py`。
 
+[`specs/s6/replay.md`](specs/s6/replay.md) 维护低照白天回放的机制对照；`configs/replay.json` 锁亮度变换和父封存，`scripts/night_replay.py` 复用原适配及开发入口，`runs/replay_<编号>/` 保留原槽位、实际曝光、固定末轮及开发证据。长期回归在 `tests/train/test_night_replay.py`，不留处理后的白天图。
+
+[`specs/s6/tail.md`](specs/s6/tail.md) 维护尾类名额对照，`configs/tail.json` 锁配额，`scripts/night_tail.py` 仅用已封存的图片特征和预测复算；实际 `runs/tail_<编号>/selection.json` 保留仅图步骤、名单与读取回执。训练与开发产物同前，长期回归在 `tests/train/test_night_tail.py`。
+
 `scripts/seed_train.py` 是原白天 A 的受限重复入口，`scripts/seed_queue.py` 是现有 BitaHub 实例的本机队列与收尾入口。`runs/replica_<编号>/` 形成后只保留逐 seed 权重与必要训练记录、清单和云交接收据；排队过程中的本机锁、部署副本与传输包不入 Git。
 
 24 轮配方按臂保留 `epoch08/ema.pt`、`epoch16/ema.pt` 及 `last.pt`，每个完整轮以 `last.pt` 恢复。第 8、16、24 轮统一使用 `epoch<两位轮数>/dev960/` 存放评价证据，例如 `epoch24/dev960/metrics.json`。`comparison.json` 的 `by_epoch` 对应各观测点，原 R80 参照只保存一次。`runs/s3_17/scale24_preflight.json` 保存本机预检与包身份。入口、命令和范围见[延长微调](specs/s3/scale.md#延长微调)。

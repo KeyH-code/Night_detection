@@ -228,9 +228,22 @@ def _parent(cfg, tasks, pair_cfg, identity):
     return result, parent, seal
 
 
-def fit_run(raw, cfg, scratch, out):
-    from seed_eval import probe_gpu
+def snapshot_sources(out, entrypoint):
     from night_run import CODE
+
+    if entrypoint not in ('night_rank.py', 'night_replay.py', 'night_tail.py'):
+        raise ContractError('Unregistered experiment entrypoint')
+    (out/'code').mkdir()
+    for name in sorted(set(CODE) | {entrypoint, 'night_rank.py', 'night_train.py', 'night_adapt.py', 'night_accept.py',
+                                    'source_policy.py', 'tricycle_fusion.py'}):
+        shutil.copyfile(ROOT/'scripts'/name, out/'code'/name)
+    if entrypoint == 'night_tail.py':
+        for name in ('night_strategy.py', 'night_select.py'):
+            shutil.copyfile(ROOT/'scripts'/name, out/'code'/name)
+
+
+def fit_run(raw, cfg, scratch, out, *, fit=None, entrypoint='night_rank.py', selected=None):
+    from seed_eval import probe_gpu
 
     start = time.monotonic()
     until = start + cfg['max_minutes']*60
@@ -239,6 +252,11 @@ def fit_run(raw, cfg, scratch, out):
     all_tasks, protocol, identity = adapt.alignment(pair, old, arms=('e1',), seeds=seeds)
     tasks = all_tasks['e1']
     parents, parent, seal = _parent(cfg, tasks, pair, identity)
+    if selected is not None:
+        check_equal('selection seed scope', set(seeds), set(selected['lists']))
+        day_keys = adapt._day_keys(identity['source_train'])
+        tasks = {seed: adapt.ratio_slot_task(seed, 20, day_keys, selected['lists'][seed]['records'], old,
+                                             t['slots']) for seed,t in tasks.items()}
     versions = {k: version(k) for k in train.LIBS}
     check_equal('locked package set', identity['versions'], versions)
     check_equal('frozen root A checkpoint', identity['A_sha256'], sha256(train.CHECKPOINT))
@@ -247,18 +265,17 @@ def fit_run(raw, cfg, scratch, out):
     day_by = {r['key']: r for r in day['records']}
     dev = train.verify_subset(train.SOURCE, protocol['data']['source_ready_sha256'], 'source_dev')
     night = verify_dev(train.NIGHT, protocol['data']['night_ready_sha256'])
-    for split, entry in (('source_train', day), ('source_dev', dev), ('night_dev', night)):
-        check_equal(f'D {split} manifest', identity[split], entry['manifest'])
+    for split, split_contract in (('source_train', day), ('source_dev', dev), ('night_dev', night)):
+        check_equal(f'D {split} manifest', identity[split], split_contract['manifest'])
     dev_groups = {r['group_id'] for r in dev['records']+night['records']}
     out.mkdir(exist_ok=False)
     done, assessments, pairs, parent_pairs = [], {}, {}, {}
     error = None
     try:
         (out/'protocol.json').write_bytes(raw)
-        (out/'code').mkdir()
-        for name in sorted(set(CODE) | {'night_rank.py', 'night_train.py', 'night_adapt.py', 'night_accept.py',
-                                        'source_policy.py', 'tricycle_fusion.py'}):
-            shutil.copyfile(ROOT/'scripts'/name, out/'code'/name)
+        snapshot_sources(out, entrypoint)
+        if selected is not None:
+            write_json(out/'selection.json', {**selected, 'slots': {str(s): t['slots'] for s,t in tasks.items()}})
         with tempfile.TemporaryDirectory(prefix='rank-', dir=scratch) as td:
             tmp = Path(td)
             for key in ('YOLO_CONFIG_DIR', 'TORCH_HOME', 'MPLCONFIGDIR', 'TEMP', 'TMP', 'TMPDIR', 'XDG_CONFIG_HOME'):
@@ -292,16 +309,19 @@ def fit_run(raw, cfg, scratch, out):
                             (list(payloads['day']), list(payloads['night'])))
                 write_json(phase/'inputs.json', {**rec, 'source_keys': day_keys, 'parent_sha256': sha256(path),
                                                    'gradient_identity': canonical_hash([day_keys, task['slots']['input_slots']])})
-                print(f'Rank seed {seed}: fit on 100 original night images + {len(day_keys)} source replay images.', flush=True)
+                print(f'{out.name} seed {seed}: fit on 100 original night images + {len(day_keys)} source replay images.', flush=True)
                 torch.manual_seed(seed)
                 torch.use_deterministic_algorithms(True)
                 with train.telemetry() as telemetry:
-                    weight, result = _fit(torch, cv2, path, payloads, cfg, until, phase)
+                    if fit is None:
+                        weight, result = _fit(torch, cv2, path, payloads, cfg, until, phase)
+                    else:
+                        weight, result = fit(torch, cv2, payloads, task['plan'], seed, old, cfg, until, phase)
                 write_json(phase/'train.json', dict(result, gpu=telemetry, seed=seed))
                 del payloads
                 torch.cuda.empty_cache()
                 torch.use_deterministic_algorithms(False)
-                print(f'Rank seed {seed}: fixed weight saved; evaluate locked development protocol.', flush=True)
+                print(f'{out.name} seed {seed}: fixed weight saved; evaluate locked development protocol.', flush=True)
                 policy, ref, baseline, anchors, a_day = adapt._reference(pair, protocol, dev, night, [seed])
                 pairs[seed], assessments[seed] = adapt._evaluate(torch, weight, phase/'dev', box/'eval', night,
                                                                  dev, policy, ref, anchors[seed], a_day, until)
@@ -312,11 +332,11 @@ def fit_run(raw, cfg, scratch, out):
                 parent_pairs[seed] = (old_rows, old_points, *pairs[seed][2:])
                 done.append(seed)
                 a = assessments[seed]
-                print(f'Rank seed {seed}: night {a["classes_met"]}/5; day protection={a["day_protection"]["met"]}; '
+                print(f'{out.name} seed {seed}: night {a["classes_met"]}/5; day protection={a["day_protection"]["met"]}; '
                       f'day macro delta={100*a["day_protection"]["macro_delta"]:.6f} pp; review={a["review"]}', flush=True)
             write_json(out/'comparison.json', {'candidate_minus_parent': accept.paired_recall(parent_pairs, policy),
                        'candidate_minus_historical_d': accept.paired_recall(pairs, policy),
-                       'D_is_same_training_mechanism': False, 'assessments': assessments,
+                       'D_is_same_training_mechanism': entrypoint == 'night_tail.py', 'assessments': assessments,
                        'candidate_day_gate_relative_to_A': True})
     except BaseException as exc:
         error = f'{type(exc).__name__}: {exc}'
@@ -324,30 +344,34 @@ def fit_run(raw, cfg, scratch, out):
     finally:
         write_json(out/'run.json', {'status': 'complete' if not error and done == seeds else 'incomplete',
                                    'completed_seeds': done, 'error': error, 'seconds': time.monotonic()-start,
+                                   'entry': entrypoint, 'config_sha256': sha256(out/'protocol.json') if (out/'protocol.json').exists() else None,
                                    'a_sha256': identity['A_sha256'], 'versions': versions, 'initial_gpu': gpu,
                                    'python': sys.version, 'cloud_used': False, 'final_test_executed': False,
                                    'source_train': day['manifest'], 'source_dev': dev['manifest'], 'night_dev': night['manifest']})
         write_json(out/'manifest.json', {'status': 'sealed', 'files': train._receipt(out)})
 
 
-def main():
-    p = argparse.ArgumentParser(description=__doc__)
+def main(*, kind='rank', fit=None, validate=None, select=None, description=__doc__):
+    p = argparse.ArgumentParser(description=description)
     p.add_argument('--config-sha256', required=True)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--scratch', type=Path, required=True)
     a = p.parse_args()
-    raw = read_sealed_bytes(ROOT, 'configs/rank.json', a.config_sha256, [])
+    raw = read_sealed_bytes(ROOT, f'configs/{kind}.json', a.config_sha256, [])
     cfg = json.loads(raw)
-    check_equal('registered rank schema', 1, cfg['schema_version'])
+    check_equal('registered experiment schema', 1, cfg['schema_version'])
     if cfg['seeds'] not in ([43], [17, 29]) or not (1 <= cfg['day_images'] <= 2000 and 0 < cfg['max_minutes'] <= 60):
         raise ContractError('Unregistered seed batch or local training budget')
     out, scratch = a.output.absolute(), a.scratch.absolute()
-    if out.parent != ROOT/'runs' or out.exists() or out.is_symlink() or not re.fullmatch(r'rank_\d{3}', out.name):
-        raise ContractError('Expected a new runs/rank_NNN directory')
+    if validate is not None:
+        validate(cfg)
+    if out.parent != ROOT/'runs' or out.exists() or out.is_symlink() or not re.fullmatch(rf'{kind}_\d{{3}}', out.name):
+        raise ContractError(f'Expected a new runs/{kind}_NNN directory')
     if scratch.resolve() != scratch or scratch.is_relative_to(ROOT) or not scratch.is_dir():
         raise ContractError('Expected an existing external scratch directory')
     _no_reparse(out.parent); _no_reparse(scratch)
-    fit_run(raw, cfg, scratch, out)
+    selected = select(cfg, scratch) if select is not None else None
+    fit_run(raw, cfg, scratch, out, fit=fit, entrypoint=f'night_{kind}.py', selected=selected)
 
 
 if __name__ == '__main__':

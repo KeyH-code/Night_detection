@@ -6,7 +6,7 @@
 
 **白天源模型 A 已按五类受限冻结。** 夜间零样本基线和后续百图对照共用 [`align_001/17/last.pt`](runs/align_001/17/last.pt)。在完整 500 张白天开发图和锁定多视图协议下，行人、骑行者、汽车、卡车、有轨车辆在三个种子上通过全部 15 项类别验收。行人召回（P≥75%）分别为 63.22%、60.74%、61.57%。[冻结决定与权重身份](specs/s4/plan.md) · [逐类结果和复算命令](reports/a.md#整景尺度适配三种子五类通过) · [夜间基线与百图对照准备](specs/s5/plan.md)
 
-**当前处于 S6 对照。** [随机臂 D](reports/night.md#百图随机臂)及 [E1/E2](reports/night.md#百图策略训练)均完成本机百图训练与开发评价，策略有夜间观察收益但未通过全部白天保护与恢复要求。[五类开发复评](reports/night.md#五类统一口径复评)不改旧口径判定。最终留出未启动。[整体进度](plan.md#阶段)。S2 诊断已执行，阶段结论仍待单独复核。
+**当前处于 S6 对照。** [随机臂 D](reports/night.md#百图随机臂)及 [E1/E2](reports/night.md#百图策略训练)完成本机百图开发对照，夜间仍缺卡车和有轨车辆。对[低误报缺口](reports/night.md#低误报缺口)的[末层排序](reports/night.md#双类末层排序)未入围，继续验证[低照回放](specs/s6/replay.md)。[五类开发复评](reports/night.md#五类统一口径复评)不改旧口径判定；最终留出未启动。[整体进度](plan.md#阶段)。S2 诊断已执行，阶段结论仍待单独复核。
 
 <details><summary>白天历史记录（以下为当时状态）</summary>
 
@@ -39,7 +39,7 @@
 | BitaHub GPU | [开机、状态与自动收尾](GPU.md#bitahub-开发机) |
 | 实验验收与冻结 | [RULES.md](RULES.md) |
 | 计划 | [plan.md](plan.md) |
-| 阶段文档 | [当前 S5 计划](specs/s5/plan.md) · [S2 诊断待关闭](specs/s2/plan.md) · [阶段目录](specs/) |
+| 阶段文档 | [当前 S6 计划](specs/s6/plan.md) · [S5 夜间验收](specs/s5/plan.md#恢复目标) · [阶段目录](specs/) |
 | 固定best诊断 | [运行身份](runs/a_001_diag/run.json)、[数值对照](runs/a_001_diag/comparison.csv)、[初审与复审队列](runs/a_001_diag/cases.jsonl)、[状态](runs/a_001_diag/review.json)；结论见[a.md诊断](reports/a.md#诊断) |
 | 数据报告 | [data.md](reports/data.md) |
 | 正式训练报告 | [a.md](reports/a.md) |

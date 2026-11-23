@@ -89,3 +89,19 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 ```powershell
 .venv-train/Scripts/python.exe -B scripts/night_rank.py --config-sha256 '<rank.json SHA-256>' --scratch '<项目外任务目录>' --output runs/rank_NNN
 ```
+
+### 低照回放
+
+[`replay.json`](replay.json) 锁 [低照回放单因素对照](../specs/s6/replay.md)，复用 E1 父封存名单、原白天槽位及 200 更新，从冻结 A 重启，只在每两张白天回放中的第二张叠加低照变换。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_replay.py --config-sha256 '<replay.json SHA-256>' --scratch '<项目外任务目录>' --output runs/replay_NNN
+```
+
+### 尾类选样
+
+[`tail.json`](tail.json) 锁 [尾类配额对照](../specs/s6/tail.md)。排序进程只打开封存特征、分数和仅图元数据，验证原 E1 等额重放，在独立新名单冻结后才暂存其 100 个标签；训练配方与原 E1、D 相同。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_tail.py --config-sha256 '<tail.json SHA-256>' --scratch '<项目外任务目录>' --output runs/tail_NNN
+```
