@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "pool_count": 994,
+  "anchor_count": 20,
+  "seeds": [17, 29, 43],
+  "images_sha256": "04e000c0fb125c2eb7518658a94bbfeaba24cb2885347029af17d637fd7bd4e0",
+  "random_sha256": "46ce3716a08030046349d2ce40a2d20a4e0369d9b22c90a5c7732a853da22b58",
+  "checkpoint_sha256": "45d212eb674aa60ef2a159652a448cf84eb897ce5a0820ade7dc591fe2afe659",
+  "e1": {"shortlist": 64, "quota": 16},
+  "e2": {"representatives": 40, "diverse": 40, "neighbors": 5}
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "class_ids": [0, 1, 2, 3, 4],
+  "seeds": [17, 29, 43],
+  "fppi": "0.02",
+  "recovery_ratio": "0.80",
+  "day": {"macro_drop": "0.01", "class_drop": "0.02"},
+  "interval": {"repeats": 2000, "seed": 20261026, "width_review": "0.20"},
+  "development": {
+    "source_dev": "30ea66f511534b095e4b37b55c7aab40bdab096b684264f385cd77248566daa9",
+    "night_dev": "c702eb03c25757d1f60422ddf12c51040a2e275dda3d624abcfffb43ad411090"
+  },
+  "sealed": {
+    "align_001": "9a1dfa2de3cecf9eafa895caca0516f0c4f7993402d74a457c51bac4a3bf4fc3",
+    "night_001": "b637cd38612b8db1faaf9e418dbde62bcaadd80ee13ad9c69fa7187aecc623a2",
+    "d_001": "697632cd44257da5357459d1b56afc9155a01bcd6868ae297a21239a85990874",
+    "checkpoint_a": "45d212eb674aa60ef2a159652a448cf84eb897ce5a0820ade7dc591fe2afe659"
+  }
+}

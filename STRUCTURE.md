@@ -19,7 +19,7 @@
 | runs/a_001/ | 首训A基线 | 一份原始训练记录、代码/配置/环境快照、权重及清单；不等于最终A已冻结 | 实验名_序号；如 a_001 |
 | runs/a_001_train/ | 固定best的训练集评价 | metrics.json、comparison.csv、run.json、必要日志及评价代码快照；不复制数据/权重 | 关联实验名_用途；原训练清单不改 |
 | `runs/<实验>/`、`runs/<实验>_diag/` | 候选、诊断、对照及冻结证据 | 实际执行后保存配置/代码/环境身份、必要日志、指标、权重及冻结记录；固定权重诊断保存可复查预测/匹配/PR，不复制原权重 | 训练用a_002、d_001等短ID；诊断用`<实验>_diag`；seed写身份/配置；不预建空目录 |
-| reports/ | 结论 | data.md数据报告、a.md源模型报告；后续形成有效结果后维护对应主题报告 | 按主题/实验；不留过程流水 |
+| reports/ | 结论 | data.md数据报告、a.md源模型报告、night.md夜间基线及后续夜间结果；形成有效结果后维护对应主题报告 | 按主题/实验；不留过程流水 |
 | plots/a_001/ | 图表 | 正式日志生成的分项损失、逐类AP等分析图 | loss.png、ap.png；不放页面截图 |
 | plots/a_001_train/ | 对照图 | 固定best的train与已有dev逐类AP对照 | ap.png；由comparison.csv复建 |
 | `plots/<实验或诊断ID>/` | 可复建结果图 | 实际产生的PR、错误、尺寸及配对比较图；引用run中的原始数值 | pr.png、errors.png等短名；不放审核网页截图 |
@@ -43,6 +43,7 @@
 | specs/s3/scale.md | 行人分辨率专项路线、训练尺度对照与执行准备 |
 | specs/s3/tricycle.md | 三轮车专项方案、预算、验证顺序和锁定五类的保护要求 |
 | specs/s3/replica.md | 原 A 的 seed 29/43 配方、云自动执行计划、预算与验证边界 |
+| specs/s5/select.md | E1/E2 仅图选样的算法、设计依据、隔离门及实施验证，方案状态见文档 |
 | specs/s<编号>/review.md | 已完成阶段的证据索引、退出结论及必要限制；无同期计划时明确事后整理，不替代reports或runs |
 
 后续实验/图目录行描述生成模式，不表示这些目录或结果已经存在。只有实际形成可复查证据时创建；本次规则与规划不预建实验目录或空报告。
@@ -192,6 +193,26 @@ errors.json维护同一配对的探索性工作点增量FP、逐IoU匹配/AP、I
 `scripts/verify_scene.py` 是 `align_001` 的只读复算入口。默认由三粒种子的封存对象、白名单和规则重建验收，`--replay <seed> --scratch <外部目录>` 另外从原图和对应单份权重重放；不修改封存、不保留重复预测。
 
 `runs/align_001/17/freeze.json` 是 S4 确认后单独留存的冻结记录，绑定决定所在的 Git 提交和原实验清单，不回写训练时的 `manifest.json`。仓库内从 `specs/s4/plan.md` 查权重 SHA、适用类别和 S5 交接。
+
+## S5
+
+五类统一评价入口为 `scripts/night_accept.py`，活动协议 `configs/accept.json`，长期回归 `tests/train/diagnose/test_night_accept.py`。`runs/accept_<编号>/` 只保存实际开发复算：`reference.json` 固定 A 的白天分母及阈值，`metrics.json` 留 A 夜间与 D 两域逐类工作点、保护、配对区间和复核项，`protocol.json`、`run.json`、`code/`、`manifest.json` 绑定身份及读取范围。不复制封存预测或原数据；具体读数见[夜间报告](reports/night.md#五类统一口径复评)。
+
+夜间评价身份归 `configs/night.json`；只读消费 `scripts/night_contract.py` 区分 `night_dev` 与候选池仅图沙箱，测试在 `tests/data/test_night.py`。`scripts/night_eval.py` 提供封存白天预测复算、`night_dev` 指定用途核验和正式评价入口，并维护共享阈值、风险组区间、五类输出融合和逐类恢复判定。`scripts/night_run.py` 负责仅开发集的五路采集、复算与封存；回归在 `tests/train/diagnose/test_night_eval.py`。
+
+`runs/night_<编号>/` 留存实际夜间基线：`reference.json` 是固定 A 的白天同口径参照；`objects.jsonl.gz`、`matches.jsonl.gz`、`pr.npz`、`metrics.json` 保存本轮逐图及汇总证据；`run.json`、`protocol.json`、`manifest.json` 绑定用途、实际环境、预检、运行参数及文件清单。`code/` 为运行身份快照，不作活动入口。只引用已存在的权重及白天预测，不复制原图、标签或缓存；结果与边界见 [S5 计划](specs/s5/plan.md)。
+
+`scripts/night_select.py` 是仅图随机名单的活动入口，`configs/select.json` 锁随机协议，`tests/train/diagnose/test_night_select.py` 保护无放回、用途和运行时读取。`runs/pool_001/` 仅为随机对照：`random.json` 保存各 seed 的有序名单及身份，`run.json` 保存读路径、覆盖、复算与环境，`protocol.json`、`code/`、`manifest.json` 绑定本次身份。策略引用原随机名单，不回写此 run。
+
+`configs/strategy.json` 单独锁定 [E1/E2 策略](specs/s5/select.md)。`scripts/night_strategy.py` 管两臂调度、排序及子进程读取边界；`scripts/night_capture.py` 是 E1 原图及变体的 CUDA 子进程；长期回归归 `tests/train/diagnose/test_night_strategy.py`。[`runs/pool_002/`](runs/pool_002/manifest.json) 封存 E1：`e1.json` 留名单和逐步选择，`features.npz` 留共享原图特征，`scores.npz` 独存 E1 分数，`capture.json`、`run.json`、`strategy.json`、`code/`、`manifest.json` 留实际采集与身份。预检不建 run，不保留原图、标签、权重副本或整池预测。[`runs/pool_003/`](runs/pool_003/manifest.json) 独立封存 E2：`e2.json` 留三份名单、风险组与逐步覆盖/多样值，`run.json` 绑定父清单和共享特征 SHA、读取范围、复算和跨种子重合，`strategy.json`、`code/`、`manifest.json` 固定身份；不复制特征或分数。
+
+## S6
+
+`scripts/night_train.py` 是随机臂本机训练及开发评价入口，`configs/adapt.json` 锁配方和基线身份；`tests/train/test_night_train.py` 保护轮序、用途与框几何。`runs/d_<编号>/` 保存正式随机臂原始记录：各 seed 的 `inputs.json`、`train.json`、`last.pt`、`dev/` 和采样 GPU 数据；批次预检仅保存证据，不保留预检权重、图片、标签内容或缓存。`protocol.json`、`code/`、`run.json` 及 `manifest.json` 绑定状态和复查范围；代码快照非活动入口。
+
+`scripts/night_adapt.py` 为 E1/E2 本机配对入口，活动身份归 `configs/pair.json`，复用 D 的训练核心和五类评价。`align` 只读名单和 D 实际轮序，`run` 只启动指定策略臂。`runs/e1_<编号>/`、`runs/e2_<编号>/` 保存 `slots.json`（选样顺序、D 原槽位、映射及复算身份）、`preflight.json`、逐 seed 的输入、训练日志、`last.pt` 与两域开发预测/评价，以及 `comparison.json`（实际完成三个 seed 后产生的 D 配对结果）。`protocol.json`、`run.json`、`code/`、`manifest.json` 绑定身份和已完成范围；失败 run 不冒称完成。标签准备仅给指定 arm/seed 的窄输入在项目外暂存；不保留原图、标签内容、预检权重或缓存。
+
+`configs/ratio.json` 锁定 [S6 单种子比例探索](specs/s6/plan.md#单种子比例探索)，既有选样与训练入口通过独立 `ratio` 模式执行。`runs/pool_004/` 的 `lists.json` 保存四份探索名单、排序证据和重合数，`ratio.json`、`run.json`、`code/`、`manifest.json` 绑定首版回放和读取边界，不复制特征或分数。策略训练同系列的新 run 用 `ratio` 身份区分，`comparison.json` 改记单 seed 相对 D 和同策略首版的两套配对；不是三种子复验结果。
 
 `scripts/seed_train.py` 是原白天 A 的受限重复入口，`scripts/seed_queue.py` 是现有 BitaHub 实例的本机队列与收尾入口。`runs/replica_<编号>/` 形成后只保留逐 seed 权重与必要训练记录、清单和云交接收据；排队过程中的本机锁、部署副本与传输包不入 Git。
 

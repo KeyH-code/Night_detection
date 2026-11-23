@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "adapt_sha256": "881d1a0ffcdc22d58f01193875ae9d4e1723e3fb31eb332e900bbd3ba919a093",
+  "d_manifest_sha256": "697632cd44257da5357459d1b56afc9155a01bcd6868ae297a21239a85990874",
+  "accept_manifest_sha256": "fbaf414b42e750260f8aa552f50da0853f69028ac4821d366891a6ea08676403",
+  "pool_manifest_sha256": {
+    "d": "469dca716036355bd57499f8ff4aa594e04aa758f8e2674e5f634ed186384203",
+    "e1": "47637af7ff85adfc2425d51bb07d85cb6e0091f641899bbdb01d0d2681c96214",
+    "e2": "a4a041cedfe18c168f307bd2e06390c85b34784a48e1d2f134ee9d740aeb41b9"
+  },
+  "max_minutes_per_arm": 60
+}

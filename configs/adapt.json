@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "seeds": [17, 29, 43],
+  "size": 640,
+  "accumulate": 10,
+  "updates": 200,
+  "preflight_updates": 10,
+  "lr_start": 0.0008,
+  "lr_end": 0.00008,
+  "momentum": 0.937,
+  "weight_decay": 0.00025,
+  "clip": 10.0,
+  "flip_probability": 0.5,
+  "brightness": [0.85, 1.15],
+  "schedule_salt": 20261122,
+  "evaluation_sha256": "1bed6c9802106145810498979f1c3b3a1533b98bbf92b47a6d99dc9848c581aa",
+  "random_sha256": "46ce3716a08030046349d2ce40a2d20a4e0369d9b22c90a5c7732a853da22b58",
+  "baseline_manifest_sha256": "b637cd38612b8db1faaf9e418dbde62bcaadd80ee13ad9c69fa7187aecc623a2"
+}

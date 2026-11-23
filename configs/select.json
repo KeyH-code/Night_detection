@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "pool_count": 994,
+  "budget": 100,
+  "seeds": [17, 29, 43],
+  "algorithm": "lexicographic_key_pcg64_permutation_prefix"
+}

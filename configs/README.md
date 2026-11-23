@@ -32,3 +32,52 @@ S3当前profile=dev_only_local_final_v1：每轮仅完整500 dev，batch1/worker
 `--config configs/source_s3.yaml --arm U --seed 17`解析出有效权重1/1及indices_rng_scope=S：同一PCG64流和显式概率choice，保留U身份，不复用S凭证。R/S的解析结果和原采样流保持不变，U不接受29/43或其他强度；后续重复需先登记。
 
 `source_s3_control.json`是复用旧R/S的精确兼容配置，绑定原清单、旧/新源码哈希、原配方/数据/规则及锁环境，供source_control.py独立核验。它只允许已审U增量，不能自动接纳新公共训练代码；改训练/评价/库/数据须重新判断是否仍可复用。原compare_runs仍要求严格R/S身份一致。运行身份额外绑定本配置及source_control.py，不将本地兼容通过视为Linux/4090预检通过。
+
+## 夜间
+
+`night.json` 登记 `night_001`、`d_001` 绑定的[历史两类评价口径](../specs/s5/plan.md#一协议评审)与数据、共同权重身份，不复用白天 Precision 工作点，不包含选样超参或训练预算。`scripts/night_eval.py` 的 `reference` 与 `verify` 均要求 `--protocol-sha256` 对照外部确认的配置 SHA；打印 JSON，不训练、不调用模型。真实用途须按 S5 的批次授权。
+
+获准的 `run` 同样校验配置身份，另需 `--scratch`（同卷仓库外任务目录）、`--output`（全新 `runs/night_NNN`）、`--reference` 与 `--reference-sha256`。仅用冻结 A 进行 `night_dev` 小批预检和完整无梯度评价，不以预检计分。不得把全量数据验证命令作为替代入口。
+
+`select.json` 只锁定[随机对照](../specs/s5/plan.md#已锁随机对照)，不含策略参数。`scripts/night_select.py` 要求显式 `--protocol-sha256` 与 `--images-sha256`，使用同卷的仓库外 `--scratch` 及全新 `runs/pool_NNN` 作为 `--output`。仅核验冻结候选池的仅图清单、图片及有序抽签，不访问标签或调用模型。
+
+`strategy.json` 单独锁定 [E1/E2](../specs/s5/select.md) 的参数、图像清单、D 名单和冻结 A 身份。`scripts/night_strategy.py` 的三个公开模式均要求审核后确认的 `--protocol-sha256` 和已存在的项目外 `--scratch`。须按阶段授权后才执行：
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_strategy.py e1-preflight --protocol-sha256 '<审核确认的 strategy.json SHA-256>' --scratch '<项目外任务目录>'
+.venv-train/Scripts/python.exe -B scripts/night_strategy.py e1 --protocol-sha256 '<审核确认的 strategy.json SHA-256>' --scratch '<同卷项目外任务目录>' --output runs/pool_NNN
+.venv-train/Scripts/python.exe -B scripts/night_strategy.py e2 --protocol-sha256 '<审核确认的 strategy.json SHA-256>' --scratch '<同卷项目外任务目录>' --e1-run '<已封存的 E1 run 路径>' --e1-manifest-sha256 '<E1 manifest.json SHA-256>' --output runs/pool_NNN
+```
+
+`e1-preflight` 只采集固定八图并打印回执，不接受 `--output`；完整 `e1` 封存三份名单和分离的特征、分数。`e2` 校验 E1 父封存清单，只消费共享原图特征及对齐的窄元数据，不读取 E1 分数、名单或候选原图。`e1` 和 `e2` 各用独立的全新输出，不覆盖封存 run。
+
+`adapt.json` 冻结 [S6 随机臂](../specs/s6/plan.md#随机臂-d)的梯度预算及基线身份。`scripts/night_train.py run` 显式校验 `--config-sha256`，要求项目外 `--scratch` 和全新的 `runs/d_NNN`；只有实际授权后才能执行。内部数据准备子进程不作选样入口。
+
+### 五类统一评价
+
+[`accept.json`](accept.json) 锁定新 [五类规则](../specs/s5/plan.md#恢复目标)、固定开发清单和 A/D 封存来源，不改历史 `night.json`。`replay` 只读这些封存开发预测及必要收据，离线重匹配和统计，不打开原图、标签文件、权重或最终留出。使用已存在的同卷项目外临时目录及全新输出，首次封存见 [`accept_001`](../runs/accept_001/manifest.json)：
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_accept.py replay --protocol-sha256 '<审核确认的 accept.json SHA-256>' --scratch '<同卷项目外任务目录>' --output runs/accept_NNN
+```
+
+### 策略配对训练
+
+[`pair.json`](pair.json) 绑定 D 训练配方、D/E1/E2 名单封存、A/D 五类参照和每臂 60 分钟本机窗口。`align` 不读取候选标签，验证六份映射、实际 D 顺序和增强哈希。`run` 再核验对齐，只启动 `--arm` 的三个种子，seed 17 先预检；仅在获得训练授权后执行。`prepare` 为独立标签准备子进程，不是公开运行入口。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_adapt.py align --protocol-sha256 '<审核确认的 pair.json SHA-256>'
+.venv-train/Scripts/python.exe -B scripts/night_adapt.py run --arm e1 --protocol-sha256 '<审核确认的 pair.json SHA-256>' --scratch '<项目外任务目录>' --output runs/e1_NNN
+```
+
+E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺序；异常停止，不静默转云或改配方。
+
+### 单种子比例探索
+
+[`ratio.json`](ratio.json) 锁 seed 43 和 40/60、60/40 两档，绑定原策略、配方及封存父结果。`ratio` 选样重放旧特征，E1 单独读旧分数；`ratio-align` 在不打开原图或标签文件的情况下验证四份名单和 D 槽位。正式训练须有单独授权，按新名单封存 SHA 和一组比例启动，输出不可覆盖。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_strategy.py ratio --protocol-sha256 '<ratio.json SHA-256>' --scratch '<同卷项目外任务目录>' --output runs/pool_NNN
+.venv-train/Scripts/python.exe -B scripts/night_adapt.py ratio-align --protocol-sha256 '<ratio.json SHA-256>' --pool-run runs/pool_NNN --pool-sha256 '<名单 manifest.json SHA-256>'
+.venv-train/Scripts/python.exe -B scripts/night_adapt.py ratio --protocol-sha256 '<ratio.json SHA-256>' --pool-run runs/pool_NNN --pool-sha256 '<名单 manifest.json SHA-256>' --arm e1 --random-count 40 --scratch '<项目外任务目录>' --output runs/e1_NNN
+```
