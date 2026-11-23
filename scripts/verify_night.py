@@ -36,7 +36,7 @@ def seed_assessments(runs):
 
 def verify(folder):
     folder = Path(folder).absolute()
-    if folder.parent != ROOT/'runs' or not re.fullmatch(r'(rank|replay|tail|repeat|presence)_\d{3}', folder.name):
+    if folder.parent != ROOT/'runs' or not re.fullmatch(r'(rank|replay|tail|repeat|presence|focus)_\d{3}', folder.name):
         raise ContractError('Expected an S6 experiment folder in runs')
     _no_reparse(folder)
     seal_path = folder/'manifest.json'
@@ -125,6 +125,10 @@ def verify(folder):
                 plan, weights = reweight_schedule(plan,{r['key']:r['classes'] for r in inputs['records']},seed,
                                                   cfg['night_weights'],cfg['salt'])
                 check_equal('verified selected-label weights', weights, fitted['night_sampling_weights'])
+            elif kind == 'focus':
+                check_equal('fixed focus classes and signal',([3,4],True),
+                            (fitted['focus_classes'],len(fitted['focus_night_positive_anchors'])==2
+                             and all(n>0 for n in fitted['focus_night_positive_anchors'])))
             check_equal('exact gradients, fixed A and no skipped updates',
                         (canonical_hash(plan), [[d[0], n[0]] for d,n in plan], identity['A_sha256'], 0,
                          dict(Counter(n[0] for _,n in plan))),
