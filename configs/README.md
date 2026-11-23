@@ -120,7 +120,7 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/verify_night.py runs/replay_002
 ```
 
-对 `rank`、`replay`、`tail`、`repeat`、`presence`、`focus`、`style`、`long`、`width`、`target` 的正式封存读取清单、白名单与开发预测，不打开图片、标签内容或启动模型。同一命令可接多个不同 seed run；拒绝不同配方、代码、环境、评价或重复 seed。区分三种子点估计全过和证据完整的稳定恢复。
+对 `rank`、`replay`、`tail`、`repeat`、`presence`、`focus`、`style`、`long`、`width`、`target`、`paste` 的正式封存读取清单、白名单与开发预测，不打开图片、标签内容或启动模型。同一命令可接多个不同 seed run；拒绝不同配方、代码、环境、评价或重复 seed。区分三种子点估计全过和证据完整的稳定恢复。
 
 ### 共识选样
 
@@ -168,4 +168,12 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 
 ```powershell
 .venv-train/Scripts/python.exe -B scripts/night_target.py --config-sha256 '<target.json SHA-256>' --scratch '<项目外任务目录>' --output runs/target_NNN
+```
+
+### 尾类合成回放
+
+[`paste.json`](paste.json) 锁[白天供体与已选夜景的合成对照](../specs/s6/paste.md)。仅在已获准训练输入之间粘贴尾类局部，碰到已有标签或供体无效则保留原白天槽位；真实夜图、原生损失、梯度更新数及开发评价不变。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_paste.py --config-sha256 '<paste.json SHA-256>' --scratch '<项目外任务目录>' --output runs/paste_NNN
 ```

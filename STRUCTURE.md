@@ -238,6 +238,8 @@ errors.json维护同一配对的探索性工作点增量FP、逐IoU匹配/AP、I
 
 [`specs/s6/target.md`](specs/s6/target.md) 维护原名单上的夜间单域对照，`configs/target.json`／`scripts/night_target.py` 锁零白天梯度和原夜间顺序，`runs/target_<编号>/` 留实际消费和两域验证。长期回归归 `tests/train/test_night_target.py`。
 
+[`specs/s6/paste.md`](specs/s6/paste.md) 维护现有白天尾类供体与夜景合成回放边界，`configs/paste.json`／`scripts/night_paste.py` 锁标签保持和梯度安排；`runs/paste_<编号>/` 留事件汇总与开发证据，不保存合成图。长期回归在 `tests/train/test_night_paste.py`。
+
 `scripts/seed_train.py` 是原白天 A 的受限重复入口，`scripts/seed_queue.py` 是现有 BitaHub 实例的本机队列与收尾入口。`runs/replica_<编号>/` 形成后只保留逐 seed 权重与必要训练记录、清单和云交接收据；排队过程中的本机锁、部署副本与传输包不入 Git。
 
 24 轮配方按臂保留 `epoch08/ema.pt`、`epoch16/ema.pt` 及 `last.pt`，每个完整轮以 `last.pt` 恢复。第 8、16、24 轮统一使用 `epoch<两位轮数>/dev960/` 存放评价证据，例如 `epoch24/dev960/metrics.json`。`comparison.json` 的 `by_epoch` 对应各观测点，原 R80 参照只保存一次。`runs/s3_17/scale24_preflight.json` 保存本机预检与包身份。入口、命令和范围见[延长微调](specs/s3/scale.md#延长微调)。

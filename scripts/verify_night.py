@@ -36,7 +36,7 @@ def seed_assessments(runs):
 
 def verify(folder):
     folder = Path(folder).absolute()
-    if folder.parent != ROOT/'runs' or not re.fullmatch(r'(rank|replay|tail|repeat|presence|focus|style|long|width|target)_\d{3}', folder.name):
+    if folder.parent != ROOT/'runs' or not re.fullmatch(r'(rank|replay|tail|repeat|presence|focus|style|long|width|target|paste)_\d{3}', folder.name):
         raise ContractError('Expected an S6 experiment folder in runs')
     _no_reparse(folder)
     seal_path = folder/'manifest.json'
@@ -158,6 +158,19 @@ def verify(folder):
                             (fitted['original_schedule_sha256'],fitted['source_staged'],fitted['domain_gradient_batches'],
                              fitted['counts']['source'],fitted['focus_classes']))
                 plan=night_batches(plan,verified_night)
+            elif kind == 'paste':
+                events=fitted['paste_events']
+                if any(not (0 < int(k) < len(plan) and int(k)%2==1 and v['class_id'] in (3,4)
+                            and 0<=v['dest_rect'][0]<v['dest_rect'][2]<=640
+                            and 140<=v['dest_rect'][1]<v['dest_rect'][3]<=500
+                            and v['dest_rect'][2]-v['dest_rect'][0] in cfg['widths'] and .3199<=v['gain']<=.7801)
+                       for k,v in events.items()):
+                    raise ContractError('Invalid approved synthesis slot, class, bounds or gain')
+                counts=Counter(str(v['class_id']) for v in events.values())
+                check_equal('paste ledger and preserved raw night route',
+                            (dict(counts),2000-len(events),100,[],all(counts[str(c)]>=cfg['minimum_exposures'] for c in (3,4))),
+                            (fitted['paste_event_counts'],fitted['source_untouched_exposures'],fitted['distinct_night_images'],
+                             fitted['focus_classes'],fitted['paste_support_met']))
             check_equal('exact gradients, fixed A and no skipped updates',
                         (canonical_hash(plan), [[item[0] for item in micro] for micro in plan], identity['A_sha256'], 0,
                          dict(Counter(micro[-1][0] for micro in plan))),
