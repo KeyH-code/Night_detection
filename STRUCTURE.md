@@ -214,6 +214,8 @@ errors.json维护同一配对的探索性工作点增量FP、逐IoU匹配/AP、I
 
 `configs/split.json` 锁 [同名单单因素拆解](specs/s6/hard.md#单因素拆解)。既有 `night_joint.py` 以独立模式保存 `runs/hard_003/` 的配置、两臂权重与开发证据，只引用不复制 `hard_002/control`。
 
+`configs/quality.json` 锁 [仅质量分类](specs/s6/hard.md#仅质量分类)，复用同一入口与同名单控制，`runs/hard_004/` 留单臂原始记录、权重及开发证据。
+
 S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py` 锁定 [300 张对照](specs/s7/plan.md#300-张探索)。`runs/expand_<编号>/` 保存相应选样、运行、末轮、开发评价与配对证据，不复制图或标签；长期回归归 `tests/train/test_night_expand.py`。
 
 [`specs/s7/e2.md`](specs/s7/e2.md) 维护 300 张 E2 追加配比及 E1 接续分支；[`configs/e2_300.json`](configs/e2_300.json) 锁 D300、平衡臂、历史种子与配额。现有 `night_expand.py` 和同一 `expand_` 运行结构负责两新档；`mix.json` 保存处理配置，`selection.json` 另记覆盖、共图槽位和候选读取，`comparison.json` 另记同策略平衡配对。直接两极对照由 `mix-pair` 从封存证据复算。实际结果仍归夜间报告和对应 run。

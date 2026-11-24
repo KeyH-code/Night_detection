@@ -244,3 +244,10 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/night_joint.py split --config-sha256 '<split.json SHA-256>' --scratch D:/Temp
 .venv-train/Scripts/python.exe -B scripts/night_joint.py verify-split --config-sha256 '<split.json SHA-256>' --manifest-sha256 '<hard_003 SHA-256>'
 ```
+
+[`quality.json`](quality.json) 锁定 [仅 IoU 质量分类](../specs/s6/hard.md#仅质量分类)，复用同一原损失控制；不重新训练历史臂。新封存为 `hard_004`。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_joint.py quality --config-sha256 '<quality.json SHA-256>' --scratch D:/Temp
+.venv-train/Scripts/python.exe -B scripts/night_joint.py verify-quality --config-sha256 '<quality.json SHA-256>' --manifest-sha256 '<hard_004 SHA-256>'
+```

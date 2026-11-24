@@ -6,6 +6,7 @@ from collections import Counter
 from fractions import Fraction
 from importlib.metadata import version
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -25,7 +26,8 @@ RUN = 'hard_002'
 ARMS = ('control', 'joint')
 SPLIT_CONFIG = 'configs/split.json'
 SPLIT_RUN = 'hard_003'
-SPLIT_ARMS = ('loc', 'negative')
+QUALITY_CONFIG = 'configs/quality.json'
+QUALITY_RUN = 'hard_004'
 SEED = 43
 
 
@@ -46,6 +48,7 @@ class JointLoss:
         self.assigned = None
         self.counter = None
         self.negatives = None
+        self.quality_mass = None
         self.calls = 0
 
     def class_terms(self, logits, target, aligned, same, other):
@@ -126,6 +129,12 @@ class JointLoss:
             original = native_bce(logits, target)
             original[1, :, 3:5] = original[1, :, 3:5] + extra.to(original.dtype)
             self._observe(pos, neg)
+            if self.quality and not self.negative and self.localization == 1:
+                mass = extra.detach().sum(dim=0)
+                if self.quality_mass is None:
+                    self.quality_mass = mass
+                else:
+                    self.quality_mass.add_(mass)
             return original
 
         def locate(pred_dist, pred_boxes, anchors, target_boxes, target, denom, mask, imgsz, stride):
@@ -141,7 +150,8 @@ class JointLoss:
 
     def summary(self):
         return {'calls': self.calls, 'positive_anchors': self.counter.tolist(),
-                'negative_buckets': self.negatives.tolist(), 'bucket_order': ['wrong', 'near', 'background']}
+                'negative_buckets': self.negatives.tolist(), 'bucket_order': ['wrong', 'near', 'background'],
+                **({'quality_mass': self.quality_mass.tolist()} if self.quality_mass is not None else {})}
 
 
 def checked(folder, digest=None):
@@ -205,13 +215,24 @@ def comparison(policy, anchor, rows, assessments):
             'joint_vs_random_descriptive': effect(anchor, rows['joint'])}
 
 
-def split_configuration(digest):
-    raw = read_sealed_bytes(ROOT, SPLIT_CONFIG, digest, [])
+def split_configuration(digest, variant='split'):
+    if variant == 'split':
+        path = SPLIT_CONFIG
+        expected = {
+            'loc': {'localization': 1.5, 'quality': 0, 'negative': 0, 'per_bucket': 8},
+            'negative': {'localization': 1, 'quality': 0, 'negative': .1, 'per_bucket': 8},
+        }
+    elif variant == 'quality':
+        path = QUALITY_CONFIG
+        expected = {'quality': {'localization': 1, 'quality': .5, 'negative': 0, 'per_bucket': 8}}
+    else:
+        raise ContractError('Unknown single-factor experiment')
+    raw = read_sealed_bytes(ROOT, path, digest, [])
     cfg = json.loads(raw)
-    check_equal('registered single-factor split', (1, {
-        'loc': {'localization': 1.5, 'quality': 0, 'negative': 0, 'per_bucket': 8},
-        'negative': {'localization': 1, 'quality': 0, 'negative': .1, 'per_bucket': 8},
-    }), (cfg['schema_version'], cfg['arms']))
+    check_equal('registered single-factor experiment', (1, expected), (cfg['schema_version'], cfg['arms']))
+    check_equal('same registered arm order', tuple(expected), tuple(cfg['arms']))
+    if variant == 'quality':
+        check_equal('fixed local time limit', 35, cfg['max_minutes'])
     return raw, cfg
 
 
@@ -280,24 +301,25 @@ def split_comparison(policy, ref, observations):
                            'min_fp_at_target': int(events.min()) if len(events) else None}
         diagnostics[arm] = {'assessment': assessment, 'truncation': caps, 'tails': tails}
     return {'arms': diagnostics, 'night_workpoints': points,
-            'vs_control': {a: ac.paired_recall({SEED: (*observations['control'][0], *observations[a][0])}, policy)['mean']
-                           for a in SPLIT_ARMS}}
+            'vs_control': {a: ac.paired_recall({SEED: (*observations['control'][0], *shown[0])}, policy)['mean']
+                           for a, shown in observations.items() if a != 'control'}}
 
 
-def run(scratch, digest, *, split=False):
+def run(scratch, digest, *, variant=None):
     from night_focus import fit_native
     from night_run import CODE
     from seed_eval import probe_gpu
 
     start = time.monotonic()
-    out = ROOT/'runs'/(SPLIT_RUN if split else RUN)
+    split = variant is not None
+    out = ROOT/'runs'/{None: RUN, 'split': SPLIT_RUN, 'quality': QUALITY_RUN}[variant]
     if out.exists() or out.is_symlink():
         raise ContractError(f'Refusing to overwrite {out.name}')
-    split_raw, spec = split_configuration(digest) if split else (None, None)
+    split_raw, spec = split_configuration(digest, variant) if split else (None, None)
     raw, cfg, hc, pair, old, protocol, identity, task, audit = configuration(spec['joint_sha256'] if split else digest)
-    arms = SPLIT_ARMS if split else ARMS
+    arms = tuple(spec['arms']) if split else ARMS
     control = split_control(spec, identity, task) if split else None
-    until = start + cfg['max_minutes'] * 60
+    until = start + (spec['max_minutes'] if variant == 'quality' else cfg['max_minutes']) * 60
     check_equal('frozen initialization availability', identity['A_sha256'], sha256(train.CHECKPOINT))
     versions = {name: version(name) for name in train.LIBS}
     check_equal('pinned environment versions', identity['versions'], versions)
@@ -318,7 +340,7 @@ def run(scratch, digest, *, split=False):
     try:
         (out/'protocol.json').write_bytes(raw)
         if split:
-            (out/'split.json').write_bytes(split_raw)
+            (out/f'{variant}.json').write_bytes(split_raw)
         write_json(out/'slots.json', task['slots'])
         (out/'code').mkdir()
         for name in sorted(set(CODE)|{'night_joint.py','night_hard.py','night_focus.py','night_rank.py','night_train.py',
@@ -402,17 +424,22 @@ def check_signal(receipt, arm='joint'):
     pos, neg = receipt['positive_anchors'], receipt['negative_buckets']
     if len(pos) != 2 or min(pos) <= 0 or len(neg) != 2 or any(len(a) != 3 for a in neg):
         raise ContractError('Expected both tail classes observed under native assignment')
-    if arm == 'loc':
-        check_equal('localization only, no negative samples applied', [[0, 0, 0], [0, 0, 0]], neg)
+    if arm in ('loc', 'quality'):
+        check_equal('no negative samples applied', [[0, 0, 0], [0, 0, 0]], neg)
     elif arm not in ('joint', 'negative') or any(min(a) <= 0 for a in neg):
         raise ContractError('Expected all six class and negative bucket signals')
+    if arm == 'quality':
+        mass = receipt.get('quality_mass', [])
+        if len(mass) != 2 or not all(math.isfinite(v) and v > 0 for v in mass):
+            raise ContractError('Expected nonzero finite extra quality mass for both classes')
 
 
-def verify(digest, manifest_sha, *, split=False):
-    split_raw, spec = split_configuration(digest) if split else (None, None)
+def verify(digest, manifest_sha, *, variant=None):
+    split = variant is not None
+    split_raw, spec = split_configuration(digest, variant) if split else (None, None)
     raw, _, hc, pair, _, protocol, identity, task, audit = configuration(spec['joint_sha256'] if split else digest)
-    arms = SPLIT_ARMS if split else ARMS
-    out = ROOT/'runs'/(SPLIT_RUN if split else RUN)
+    arms = tuple(spec['arms']) if split else ARMS
+    out = ROOT/'runs'/{None: RUN, 'split': SPLIT_RUN, 'quality': QUALITY_RUN}[variant]
     seal = checked(out, manifest_sha)
     state = adapt._json(out, seal, 'run.json')
     check_equal('complete exact comparison', ('complete', list(arms), digest, identity['A_sha256'], False, False),
@@ -430,7 +457,7 @@ def verify(digest, manifest_sha, *, split=False):
     observations = {}
     if split:
         check_equal('exact sealed split parameters and historical proof', (split_raw, spec['control_manifest_sha256']),
-                    (ac._checked_file(out, seal, 'split.json', []), state['control_manifest_sha256']))
+                    (ac._checked_file(out, seal, f'{variant}.json', []), state['control_manifest_sha256']))
         control = split_control(spec, identity, task)
         inputs = adapt._json(out, seal, 'inputs.json')
         check_inputs(inputs, task, managed(hc, task, audit))
@@ -448,20 +475,20 @@ def verify(digest, manifest_sha, *, split=False):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode', choices=('run','verify','split','verify-split'))
+    p.add_argument('mode', choices=('run', 'verify', 'split', 'verify-split', 'quality', 'verify-quality'))
     p.add_argument('--config-sha256', required=True)
     p.add_argument('--scratch', type=Path)
     p.add_argument('--manifest-sha256')
     a = p.parse_args()
-    if a.mode in ('verify', 'verify-split'):
+    if a.mode.startswith('verify'):
         if a.scratch or not a.manifest_sha256: p.error('verify requires only config and manifest SHA')
-        verify(a.config_sha256, a.manifest_sha256, split=a.mode == 'verify-split')
+        verify(a.config_sha256, a.manifest_sha256, variant=a.mode.removeprefix('verify-') if a.mode != 'verify' else None)
         return
     if not a.scratch or a.manifest_sha256: p.error('run requires an external scratch directory')
     scratch = a.scratch.absolute(); _no_reparse(scratch); _no_reparse(ROOT/'runs')
     if not scratch.is_dir() or scratch.resolve() != scratch or scratch.is_relative_to(ROOT) or scratch.drive != ROOT.drive:
         p.error('Expected an existing external same-volume scratch directory')
-    run(scratch, a.config_sha256, split=a.mode == 'split')
+    run(scratch, a.config_sha256, variant=None if a.mode == 'run' else a.mode)
 
 
 if __name__ == '__main__':

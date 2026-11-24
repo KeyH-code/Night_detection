@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import torch
 import torch.nn.functional as F
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 
@@ -88,3 +89,32 @@ def test_negative_only_preserves_regression_and_skips_positive_quality():
     assert counts[0].tolist() == [1, 1, 0]
     grad, = torch.autograd.grad(terms.sum(), z)
     assert not grad[0].any() and not grad[1, :, :3].any() and grad[1, 0, 3] == 0
+
+
+def test_quality_only_has_no_box_or_unassigned_gradient_and_receipt_rejects_negatives():
+    from night_joint import JointLoss, check_signal
+    from source_contract import ContractError
+
+    native_regression = object()
+    criterion = SimpleNamespace(assigner=object(), bce=torch.nn.BCEWithLogitsLoss(reduction='none'),
+                                bbox_loss=native_regression)
+    obj = JointLoss(1, .5, 0, 8)
+    obj.attach(criterion)
+    assert criterion.bbox_loss is native_regression
+    z = torch.zeros(2, 3, 6, requires_grad=True)
+    q = torch.zeros_like(z)
+    q[1, 0, 3], q[1, 1, 4] = .5, .75
+    overlap = torch.tensor([.8, .2, 0.], requires_grad=True)
+    terms, pos, neg = obj.class_terms(z, q, overlap, None, None)
+    dz, diou = torch.autograd.grad(terms.sum(), (z, overlap), allow_unused=True)
+    assert (pos.tolist(), neg.tolist()) == ([1, 1], [[0, 0, 0], [0, 0, 0]])
+    assert diou is None and torch.nonzero(dz).tolist() == [[1, 0, 3], [1, 1, 4]]
+    assert dz[1, 0, 3] < 0 < dz[1, 1, 4]
+    receipt = {'calls': 2000, 'positive_anchors': [1, 1], 'negative_buckets': neg.tolist(),
+               'bucket_order': ['wrong', 'near', 'background'], 'quality_mass': terms.detach().sum(0).tolist()}
+    check_signal(receipt, 'quality')
+    with pytest.raises(ContractError, match='quality mass'):
+        check_signal({**receipt, 'quality_mass': [0., 1.]}, 'quality')
+    receipt['negative_buckets'][1][0] = 1
+    with pytest.raises(ContractError, match='no negative samples'):
+        check_signal(receipt, 'quality')
