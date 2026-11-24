@@ -232,6 +232,8 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `runs/tail_diag/` 留 [尾类检出与误报迁移](specs/s7/plan.md#尾类检出与误报迁移)的三模型聚合数值、误报索引及输入身份；不复制原预测或样本图。
 
+`runs/tail_gap/` 留 [尾类工作点分差](specs/s7/plan.md#尾类工作点分差)的固定事件、分数与误报摘要和输入身份；不复制原预测、原图或一次性计算脚本。
+
 `scripts/night_tal.py` 执行和核验 [TAL 正样本分配预检](specs/s7/plan.md#尾类正样本分配)；`runs/tal_<编号>/` 留该次训练侧统计、抽样／环境身份和代码快照，不保留样本或预测。`tests/train/test_night_tal.py` 保护作用范围以及否决门槛。
 
 `runs/tal_002/` 是 [有轨车辆候选边界](specs/s7/plan.md#有轨车辆候选边界)的观测证据，同类目录只留逐曝光摘要与清单，不留临时观测脚本或候选张量。
