@@ -18,6 +18,8 @@ from source_contract import ContractError, NAMES, canonical_hash, check_equal, s
 
 BASE_SHA='24975bacea26e9349d27886c624c97a3131176095af42950cf02275a1b68a2d2'
 SHIFT_SHA='d5d625d4f743880a21ea0acc546a8873e28c6d83a3aec602f99f6b5ba6ef7dfa'
+DIAG_SHA='864d5ce5529f368a0b769c8a1a7c3c4e7b0ee1c424af1be634f47954d7451995'
+LOCAL_PROBE_SHA='0025f408346186ccf012cddef9407d0593a357526b1dad1afedbb2a420d5a93a'
 BUCKETS=('classification','classification_localization','localization','background_candidate')
 CID=3
 
@@ -38,8 +40,10 @@ class Box:
 
 
 class Ledger:
-    def __init__(self):
-        self.history=deque(maxlen=32)
+    def __init__(self, *, history_limit=32):
+        if history_limit not in (32,None):
+            raise ContractError('Unregistered history limit')
+        self.history=deque(maxlen=history_limit)
 
     def push(self,current):
         if len({x.anchor for x in current})!=len(current):
@@ -128,7 +132,7 @@ def training_boundary(model, payload, until):
 
 
 class Frontier:
-    def __init__(self,model,groups,threshold):
+    def __init__(self,model,groups,threshold,*,history_limit=32):
         from night_truck import score_residual
 
         self.model=model; self.groups=groups; self.score_residual=score_residual
@@ -141,7 +145,8 @@ class Frontier:
         self.low,self.high=[1/(1+math.exp(-(z+k))) for k in (-math.log(2),math.log(2))]
         self.features=[]
         self.hooks=[l.register_forward_pre_hook(lambda _,args:self.features.append(args[0])) for l in self.layers]
-        self.ledger=Ledger(); self.calls=0; self.counts=Counter(); self.gt=set(); self.fp={k:set() for k in BUCKETS}
+        self.ledger=Ledger(history_limit=history_limit); self.calls=0; self.counts=Counter(); self.gt=set()
+        self.fp={k:Counter() for k in BUCKETS}
 
     def close(self):
         for h in self.hooks: h.remove()
@@ -188,7 +193,7 @@ class Frontier:
         if not pairs:return None
         banks=defaultdict(list); self.counts['paired_batches']+=1
         for p,n,hist_fp in pairs:
-            self.gt.add(p.gt); self.fp[n.kind].add(n.group); self.counts['pairs_'+n.kind]+=1
+            self.gt.add(p.gt); self.fp[n.kind][n.group]+=1; self.counts['pairs_'+n.kind]+=1
             banks[n.kind].append((p,n,hist_fp))
         def logits(side):
             scores=torch.tensor([x.score for x in side],device=side[0].feat.device)
@@ -213,21 +218,31 @@ class Frontier:
 
     def summary(self):
         return {'calls':self.calls,'positive_gt':len(self.gt),'negative_groups':len(set().union(*self.fp.values())),
-                'groups_by_bucket':{k:len(v) for k,v in self.fp.items()},'counts':dict(self.counts),'window':[self.low,self.high]}
+                'groups_by_bucket':{k:len(v) for k,v in self.fp.items()},'counts':dict(self.counts),'window':[self.low,self.high],
+                'pairs_per_negative_group':{k:sorted(v.values(),reverse=True) for k,v in self.fp.items()}}
 
 
-def probe(out,scratch):
+def probe(out,scratch,*,full=False):
     import shutil
     from importlib.metadata import version
     import cv2
     from ultralytics.nn.tasks import load_checkpoint
     import night_train as train
     from night_tal import INDICES
+    from night_contract import ROOT,read_sealed_json
     from seed_eval import probe_gpu
 
     start=time.monotonic(); gpu=probe_gpu(); weight,run,recipe,night,day,plan,plan_sha=inputs()
     check_equal('original library versions',run['versions'],{k:version(k) for k in train.LIBS})
-    sample=[plan[i] for i in INDICES]
+    previous=None
+    if full:
+        previous=verify_probe(ROOT/'runs/frontier_001',LOCAL_PROBE_SHA)
+        check_equal('new history does not overturn the failed local probe',False,previous['met'])
+        seal=read_sealed_json(ROOT/'runs/frontier_diag','manifest.json',DIAG_SHA,[])
+        check_equal('sealed support decomposition exists','sealed',seal['status'])
+        check_equal('unchanged plan for full-history probe',previous['plan_sha256'],plan_sha)
+    indices=range(2000) if full else INDICES
+    sample=[plan[i] for i in indices]
     src=[day[d[0]] for d,_ in sample]
     if any(r['purpose']!='source_train' or not r['image'].startswith('images/source_train/') or
            not r['label'].startswith('labels/source_train/') for r in src):raise ContractError('Forbidden training source record')
@@ -245,21 +260,24 @@ def probe(out,scratch):
         hook=None; used=[]
         with train.telemetry() as monitor:
             threshold=training_boundary(model,payload['night_pool'],start+600)
+            if full:
+                check_equal('same exact train-only frontier as prior probe',previous['point'],threshold)
             if threshold['empty_output'] or not 0<threshold['threshold']<1:
                 # This failure is a scientific gate, not an exception or permission to adjust the band.
                 stats={'calls':0,'positive_gt':0,'negative_groups':0,'groups_by_bucket':{k:0 for k in BUCKETS},'counts':{},'window':None}
                 bad=['empty_training_point']
             else:
-                hook=Frontier(model,{k:r['group_id'] for k,r in night.items()},threshold['threshold'])
+                hook=Frontier(model,{k:r['group_id'] for k,r in night.items()},threshold['threshold'],
+                              history_limit=None if full else 32)
                 data=payload['source_train']|payload['night_pool']
                 try:
-                    for i,m in zip(INDICES,sample,strict=True):
+                    for i,m in zip(indices,sample,strict=True):
                         if time.monotonic()-start>=600:raise ContractError('Ten-minute frontier probe cap')
                         b=train._batch(torch,cv2,data,m,recipe['size'])
                         result=hook.objective(b,m[1][0],audit=True)
                         if result is not None and not bool(result.isfinite()):raise ContractError('Nonfinite probe loss')
                         used.append(i)
-                        if len(used)%50==0:print(f'Truck frontier no-update probe {len(used)}/200',flush=True)
+                        if len(used)%(400 if full else 50)==0:print(f'Truck frontier no-update probe {len(used)}/{len(indices)}',flush=True)
                 finally:hook.close()
                 stats=hook.summary();bad=failures(stats)
                 check_equal('no residual updates',0,sum(int(d.count_nonzero()) for d in hook.delta))
@@ -271,6 +289,9 @@ def probe(out,scratch):
            'plan_sha256':plan_sha,'sample_plan_sha256':canonical_hash(sample),'expand_sha256':run['config_sha256'],
            'reads':reads,'development_read':False,'holdout_read':False,'cloud_used':False,'versions':run['versions'],
            'gpu':monitor,'initial_gpu':gpu,'seconds':time.monotonic()-start}
+        if full:
+            v.update(history_mode='full',diagnosis_sha256=DIAG_SHA,local_probe_sha256=LOCAL_PROBE_SHA,
+                     matcher_sha256=sha256(Path(dm.__file__)))
         e=box/'evidence';e.mkdir();shutil.copyfile(__file__,e/'night_frontier.py')
         write_json(e/'metrics.json',v);write_json(e/'manifest.json',{'status':'sealed','files':train._receipt(e)})
         e.rename(out)
@@ -286,11 +307,21 @@ def verify_probe(path,digest):
     raw={k:read_sealed_bytes(path,k,v['sha256'],[]) for k,v in files.items()}
     check_equal('sealed lengths',{k:x['bytes'] for k,x in files.items()},{k:len(v) for k,v in raw.items()})
     v=json.loads(raw['metrics.json']); empty=v['point']['empty_output'] or not 0<v['point']['threshold']<1
+    mode=v.get('history_mode','local')
+    if mode not in ('local','full'):raise ContractError('Unregistered probe history')
+    expected=list(range(2000) if mode=='full' else INDICES)
+    if mode=='full':
+        check_equal('sealed full-history diagnosis and original failed probe',(DIAG_SHA,LOCAL_PROBE_SHA),
+                    (v['diagnosis_sha256'],v['local_probe_sha256']))
+        if not empty:
+            for k,c in v['pairs_per_negative_group'].items():
+                check_equal('all pair counts conserved per negative group',
+                            (v['groups_by_bucket'][k],v['counts'].get('pairs_'+k,0)),(len(c),sum(c)))
     bad=['empty_training_point'] if empty else failures(v)
     check_equal('verified original training-only scope and gate',
                 (v['point']['images'],v['point']['fp_budget'],v['indices'],v['calls'],v['updates'],v['weights_unchanged'],
                  v['base_manifest_sha256'],v['shift_sha256'],v['development_read'],v['holdout_read'],v['cloud_used'],v['failures'],v['met']),
-                (300,6,[] if empty else list(INDICES),0 if empty else 200,0,True,BASE_SHA,SHIFT_SHA,False,False,False,bad,not bad))
+                 (300,6,[] if empty else expected,0 if empty else len(expected),0,True,BASE_SHA,SHIFT_SHA,False,False,False,bad,not bad))
     check_equal('one audit for every actual pair-producing batch',v['counts'].get('paired_batches',0),v['counts'].get('gradient_checked_batches',0))
     return {**v,'manifest_sha256':digest,'code_sha256':files['night_frontier.py']['sha256']}
 
@@ -299,7 +330,7 @@ def main():
     import argparse,re
     from night_contract import ROOT,_no_reparse
 
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('mode',choices=('probe','verify-probe'))
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('mode',choices=('probe','probe-full','verify-probe'))
     p.add_argument('--output',type=Path,required=True);p.add_argument('--scratch',type=Path);p.add_argument('--manifest-sha256')
     a=p.parse_args();out=a.output.absolute();existing=a.mode=='verify-probe'
     if out.parent!=ROOT/'runs' or not re.fullmatch(r'frontier_\d{3}',out.name) or out.exists()!=existing or out.is_symlink():
@@ -313,7 +344,7 @@ def main():
         scratch=a.scratch.absolute();_no_reparse(scratch)
         if not scratch.is_dir() or scratch.resolve()!=scratch or scratch.is_relative_to(ROOT) or scratch.drive!=out.drive:
             p.error('Expected external scratch on the same drive')
-        result=probe(out,scratch)
+        result=probe(out,scratch,full=a.mode=='probe-full')
     print(json.dumps(result,allow_nan=False),flush=True)
 
 

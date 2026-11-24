@@ -516,10 +516,28 @@ def truck_configuration(probe_sha,digest):
     return {k:q[k] for k in ('manifest_sha256','code_sha256','plan_sha256','parents','pair_sha256')}
 
 
-def truck_changes(before,after,writable):
+def frontier_configuration(probe_sha,digest):
+    from night_frontier import BASE_SHA,verify_probe
+
+    q=verify_probe(ROOT/'runs/frontier_002',probe_sha)
+    check_equal('only the full causal history and original schedule authorize training',
+                (True,'full',2000,digest,BASE_SHA),
+                (q['met'],q.get('history_mode'),q['calls'],q['expand_sha256'],q['base_manifest_sha256']))
+    check_equal('no subsampling in the passing probe',q['plan_sha256'],q['sample_plan_sha256'])
+    if not 0<q['seconds']<=600:
+        raise ContractError('Passing probe must fit the original ten-minute budget')
+    return {**{k:q[k] for k in ('manifest_sha256','code_sha256','plan_sha256','history_mode','matcher_sha256','point')},
+            'parents':{'base':{'manifest_sha256':BASE_SHA,'last_sha256':q['base_checkpoint_sha256']}},
+            'support':{**{k:q[k] for k in ('positive_gt','negative_groups','groups_by_bucket','pairs_per_negative_group')},
+                       'counts':{k:v for k,v in q['counts'].items() if k!='gradient_checked_batches'}}}
+
+
+def truck_changes(before,after,writable,*,bias=True):
     import torch
-    check_equal('exact parameter names and restricted rows',(set(before),6),(set(after),len(set(writable))))
+    check_equal('exact parameter names and restricted rows',(set(before),6 if bias else 3),(set(after),len(set(writable))))
     check_equal('named rows are all present',set(),set(writable)-set(before))
+    if not bias and any(not name.endswith('.weight') or before[name].ndim<2 for name in writable):
+        raise ContractError('Frontier permits convolution weight rows, never bias')
     writable=set(writable); changed=0
     for name,b in before.items():
         a=after[name].to(b.device,b.dtype)
@@ -532,7 +550,7 @@ def truck_changes(before,after,writable):
     return changed
 
 
-def fit_truck(torch,cv2,payload,plan,recipe,phase,spec,until):
+def fit_truck(torch,cv2,payload,plan,recipe,phase,spec,until,*,groups=None):
     import math
     from ultralytics.nn.tasks import load_checkpoint
     from ultralytics.utils.torch_utils import ModelEMA
@@ -542,15 +560,25 @@ def fit_truck(torch,cv2,payload,plan,recipe,phase,spec,until):
     start=time.monotonic()
     check_equal('fixed original update and accumulation budget',(200,10,640,2000),
                 (recipe['updates'],recipe['accumulate'],recipe['size'],len(plan)))
-    parents={k:{**spec['parents'][k],'path':ROOT/'runs'/v[0]/'43/last.pt'} for k,v in PARENTS.items()}
+    frontier=spec.get('history_mode')=='full'
+    parents={k:{**spec['parents'][k],'path':ROOT/'runs'/PARENTS[k][0]/'43/last.pt'} for k in spec['parents']}
     for k,p in parents.items():
         check_equal('exact calibrated parent weight '+k,p['last_sha256'],sha256(p['path']))
-    torch.manual_seed(43); torch.backends.cudnn.benchmark=False
-    torch.backends.cudnn.deterministic=True
-    torch.use_deterministic_algorithms(True,warn_only=True)
-    cal=Calibration(parents); ema=ModelEMA(cal.delta)
-    origin={k:v.detach().cpu().clone() for k,v in cal.base.state_dict().items()}
-    mentor_hash=sha256(parents['reference']['path'])
+    torch.manual_seed(43)
+    if frontier:
+        from night_frontier import Frontier
+
+        base,_=load_checkpoint(str(parents['base']['path']),device='cuda')
+        base.eval().half().requires_grad_(False)
+        check_equal('exact authorized truck frontier night groups',set(groups),{n[0] for _,n in plan})
+        cal=Frontier(base,groups,spec['point']['threshold'],history_limit=None)
+    else:
+        torch.backends.cudnn.benchmark=False
+        torch.backends.cudnn.deterministic=True
+        torch.use_deterministic_algorithms(True,warn_only=True)
+        cal=Calibration(parents); base=cal.base
+    ema=ModelEMA(cal.delta)
+    origin={k:v.detach().cpu().clone() for k,v in base.state_dict().items()}
     optim=torch.optim.SGD(cal.delta.parameters(),lr=recipe['lr_start'],momentum=recipe['momentum'])
     seen=[]; trace=[]; nonempty=0; active=0
     try:
@@ -571,27 +599,34 @@ def fit_truck(torch,cv2,payload,plan,recipe,phase,spec,until):
                 torch.nn.utils.clip_grad_norm_(cal.delta.parameters(),recipe['clip'],error_if_nonfinite=True)
                 with torch.no_grad():
                     for d in cal.delta:
-                        if d.grad is not None: d.grad[:-1].add_(d[:-1],alpha=recipe['weight_decay'])
+                        if d.grad is not None:
+                            if frontier:d.grad.add_(d,alpha=recipe['weight_decay'])
+                            else:d.grad[:-1].add_(d[:-1],alpha=recipe['weight_decay'])
                 optim.step();nonempty+=1
             ema.update(cal.delta); trace.append({'step':step+1,'lr':lr,'loss':sum(losses)/10})
-            if (step+1)%10==0: print(f'truck score train updates={step+1}/200',flush=True)
+            if (step+1)%10==0: print(f'{"truck frontier" if frontier else "truck score"} train updates={step+1}/200',flush=True)
     finally: cal.close()
     check_equal('observed schedule and fixed final EMA',([[d[0],n[0]] for d,n in plan],200),(seen,ema.updates))
-    check_equal('all pretrained parameters frozen prior to packing',0,truck_changes(origin,cal.base.state_dict(),
-                [n for n,p in cal.base.named_parameters() if any(p is l.weight or p is l.bias for l in cal.layers)]))
+    names=[n for n,p in base.named_parameters() if any(p is l.weight or (not frontier and p is l.bias) for l in cal.layers)]
+    check_equal('all pretrained parameters frozen prior to packing',0,truck_changes(origin,base.state_dict(),names,bias=not frontier))
     if not nonempty or not active: raise ContractError('No truck calibration updates')
-    names=[n for n,p in cal.base.named_parameters() if any(p is l.weight or p is l.bias for l in cal.layers)]
+    signal={}
+    if frontier:
+        signal=cal.summary()
+        check_equal('training sees identical frozen selection and causal history support',spec['support'],
+                    {k:signal[k] for k in spec['support']})
     with torch.no_grad():
         for l,d in zip(cal.layers,ema.ema,strict=True):
-            l.weight[3,:,0,0].copy_((l.weight[3,:,0,0].float()+d[:-1]).to(l.weight.dtype))
-            l.bias[3].copy_((l.bias[3].float()+d[-1]).to(l.bias.dtype))
-    dest=phase/'last.pt'; model=cal.base.cpu().half().eval()
+            l.weight[3,:,0,0].copy_((l.weight[3,:,0,0].float()+(d if frontier else d[:-1])).to(l.weight.dtype))
+            if not frontier:l.bias[3].copy_((l.bias[3].float()+d[-1]).to(l.bias.dtype))
+    dest=phase/'last.pt'; model=base.cpu().half().eval()
     torch.save({'ema':model,'model':None,'updates':200,'scope':'fixed last EMA of isolated truck score residual',
                 'train_args':model.args},dest)
-    del cal,model
-    check_equal('no file changes to frozen teacher',mentor_hash,sha256(parents['reference']['path']))
+    del cal,model,base
+    for k,p in parents.items():
+        check_equal('no file changes to frozen '+k,p['last_sha256'],sha256(p['path']))
     reloaded,_=load_checkpoint(str(dest),device='cpu')
-    changed=truck_changes(origin,reloaded.state_dict(),names)
+    changed=truck_changes(origin,reloaded.state_dict(),names,bias=not frontier)
     if changed<=0: raise ContractError('No truck row changes survive fixed EMA serialization')
     del reloaded; torch.cuda.empty_cache()
     # Repeat the isolation check through the actual fused inference decode path after folding.
@@ -609,6 +644,7 @@ def fit_truck(torch,cv2,payload,plan,recipe,phase,spec,until):
             checked+=1
     return dest,{'updates':200,'skipped_updates':0,'optimizer_steps_with_signal':nonempty,'nonzero_microbatches':active,
                  'trace':trace,'writable_truck_rows':sorted(names),'changed_truck_values':changed,'runtime_paired_checks':checked,
+                 **({'frontier_signal':signal,'bias_frozen':True} if frontier else {}),
                  'last_sha256':sha256(dest),'augment_schedule_sha256':canonical_hash(plan),'microbatches':seen,
                  'counts':{'source':dict(Counter(r[0] for r in seen)),'night':dict(Counter(r[1] for r in seen))},
                  'seconds':time.monotonic()-start,'checkpoint_roles':{'last':'last.pt','best':{'path':'last.pt','selected_on_dev':False}}}
@@ -640,7 +676,7 @@ def compare_truck(result,spec,approved,candidate,policy,ref):
 
 
 def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,representatives=None,margin_sha=None,crop_sha=None,
-        ring_sha=None,pairloss_sha=None,floor_sha=None,truck_sha=None):
+        ring_sha=None,pairloss_sha=None,floor_sha=None,truck_sha=None,frontier_sha=None):
     from night_run import CODE
     from seed_eval import probe_gpu
 
@@ -654,10 +690,16 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
         dc=verify(d_path,d_digest)
         check_equal('verified random 300 arm','d',dc['arm'])
     mix=None; margin=None; crop=None; ring=None; pairloss=None; floor=None; truck=None
-    if margin_sha or crop_sha or ring_sha or pairloss_sha or floor_sha or truck_sha:
-        if arm != 'e2' or mix_sha or representatives or sum(bool(v) for v in (margin_sha,crop_sha,ring_sha,pairloss_sha,floor_sha,truck_sha)) != 1:
+    if margin_sha or crop_sha or ring_sha or pairloss_sha or floor_sha or truck_sha or frontier_sha:
+        if arm != 'e2' or mix_sha or representatives or sum(bool(v) for v in (margin_sha,crop_sha,ring_sha,pairloss_sha,floor_sha,truck_sha,frontier_sha)) != 1:
             raise ContractError('Expected one isolated E2 intervention')
-        if truck_sha:
+        if frontier_sha:
+            truck=frontier_configuration(frontier_sha,digest)
+            check_equal('exact source and matcher used for the full-history probe',(truck['code_sha256'],truck['matcher_sha256']),
+                        (sha256(ROOT/'scripts/night_frontier.py'),sha256(Path(dm.__file__))))
+            from night_tal import BALANCED_SHA
+            spec={'balanced_manifest_sha256':BALANCED_SHA}
+        elif truck_sha:
             truck=truck_configuration(truck_sha,digest)
             check_equal('exact tested calibration source',truck['code_sha256'],sha256(ROOT/'scripts/night_truck.py'))
             from night_tal import BALANCED_SHA
@@ -742,6 +784,7 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
         if floor:
             code.update({'night_focus.py','night_rank.py','night_floor.py'})
         if truck: code.add('night_truck.py')
+        if frontier_sha: code.add('night_frontier.py')
         for name in sorted(code):
             shutil.copyfile(ROOT/'scripts'/name,out/'code'/name)
         write_json(out/'selection.json',{**chosen,'arm':arm,'records':selected,'slots':slots,
@@ -816,7 +859,8 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
                     guard.append(hook)
             with train.telemetry() as monitor:
                 if truck:
-                    weight,record=fit_truck(torch,cv2,d_payload|n_payload,plan,old,phase,truck,until)
+                    weight,record=fit_truck(torch,cv2,d_payload|n_payload,plan,old,phase,truck,until,
+                                            groups={r['key']:r['group_id'] for r in selected} if frontier_sha else None)
                 elif objective is None and build is None and setup is None and model_setup is None:
                     weight,record=train._fit(torch,cv2,d_payload|n_payload,plan,seed,old,phase,200,until)
                 else:
@@ -871,6 +915,8 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
                 result['floor_vs_balanced']['training_coverage']=coverage['assessment']
                 result['floor_vs_balanced']['continue_gate'] &= coverage['assessment']['met']
             if truck: compare_truck(result,truck,night_approved,candidate[2:],policy,ref)
+            if frontier_sha and time.monotonic()>=until:
+                raise ContractError('Full-history fit and development exceeded 35 minutes')
             write_json(out/'comparison.json',result)
             complete=True
             print(f'{arm.upper()}300: night {assessment["classes_met"]}/5; day={assessment["day_protection"]["met"]}; '
@@ -911,9 +957,13 @@ def verify(folder,digest=None):
     mix=s.get('e2_mix'); margin=s.get('margin'); crop=s.get('crop'); ring=s.get('ring'); pairloss=s.get('pairloss'); floor=s.get('floor'); truck=s.get('truck'); reps=100
     if truck:
         from night_tal import BALANCED_SHA
-        spec=truck_configuration(truck['manifest_sha256'],s['config_sha256'])
+        full=truck.get('history_mode')=='full'
+        spec=(frontier_configuration if full else truck_configuration)(truck['manifest_sha256'],s['config_sha256'])
+        executable='night_frontier.py' if full else 'night_truck.py'
         check_equal('sealed single frozen truck calibration',(spec,'e2',(None,)*6,spec['code_sha256']),
-                    (truck,arm,(mix,margin,crop,ring,pairloss,floor),seal['files']['code/night_truck.py']['sha256']))
+                    (truck,arm,(mix,margin,crop,ring,pairloss,floor),seal['files']['code/'+executable]['sha256']))
+        if full:
+            check_equal('sealed frontier matcher',spec['matcher_sha256'],seal['files']['code/detection_metrics.py']['sha256'])
         _,_,parent_choice=margin_reference({'balanced_manifest_sha256':BALANCED_SHA},s['config_sha256'],s['d300_parent'])
         check_equal('original balanced slots and labels',parent_choice,choice)
     if floor:
@@ -999,8 +1049,12 @@ def verify(folder,digest=None):
         coverage=floor_coverage(cov['rows'],base_cov)
         check_equal('recomputed score-floor coverage',coverage,cov['assessment'])
     if truck:
-        check_equal('exact frozen row isolation and preflight plan',(truck['plan_sha256'],6,200),
+        check_equal('exact frozen row isolation and preflight plan',(truck['plan_sha256'],3 if full else 6,200),
                     (canonical_hash(plan),len(t['writable_truck_rows']),t['runtime_paired_checks']))
+        if full:
+            check_equal('sealed original replay in full history',(True,2000,truck['support']),
+                        (t['bias_frozen'],t['frontier_signal']['calls'],{k:t['frontier_signal'][k] for k in truck['support']}))
+            if any(not n.endswith('.weight') for n in t['writable_truck_rows']):raise ContractError('Frontier bias must stay locked')
         if not (0<t['optimizer_steps_with_signal']<=200 and 0<t['nonzero_microbatches']<=2000 and t['changed_truck_values']>0):
             raise ContractError('Missing original isolated truck optimizer signal')
     check_equal('verified 300 authorized input schedules and actual consumption',
@@ -1123,23 +1177,24 @@ def main():
     p.add_argument('--pairloss-sha256')
     p.add_argument('--floor-sha256')
     p.add_argument('--truck-sha256')
+    p.add_argument('--frontier-sha256')
     p.add_argument('--diverse-run',type=Path); p.add_argument('--representative-run',type=Path)
     a=p.parse_args()
     if a.mode=='mix-pair':
-        if not (a.diverse_run and a.representative_run) or any((a.output,a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256,a.mix_sha256,a.representatives,a.margin_sha256,a.crop_sha256,a.ring_sha256,a.pairloss_sha256,a.floor_sha256,a.truck_sha256)):
+        if not (a.diverse_run and a.representative_run) or any((a.output,a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256,a.mix_sha256,a.representatives,a.margin_sha256,a.crop_sha256,a.ring_sha256,a.pairloss_sha256,a.floor_sha256,a.truck_sha256,a.frontier_sha256)):
             p.error('mix-pair requires only --diverse-run and --representative-run')
         print(json.dumps(mix_pair(checked_output(a.diverse_run,existing=True),checked_output(a.representative_run,existing=True)),allow_nan=False))
         return
     if a.diverse_run or a.representative_run: p.error('contrast runs are only for mix-pair')
     if a.mode=='verify':
-        if not a.output or any((a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256,a.mix_sha256,a.representatives,a.margin_sha256,a.crop_sha256,a.ring_sha256,a.pairloss_sha256,a.floor_sha256,a.truck_sha256)): p.error('verify accepts only --output')
+        if not a.output or any((a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256,a.mix_sha256,a.representatives,a.margin_sha256,a.crop_sha256,a.ring_sha256,a.pairloss_sha256,a.floor_sha256,a.truck_sha256,a.frontier_sha256)): p.error('verify accepts only --output')
         print(json.dumps(verify(checked_output(a.output,existing=True)),allow_nan=False))
         return
     if not (a.config_sha256 and a.scratch): p.error('expected config digest and external scratch')
     scratch=a.scratch.absolute(); _no_reparse(scratch)
     if not scratch.is_dir() or scratch.resolve()!=scratch or scratch.is_relative_to(ROOT): p.error('invalid external scratch')
     if a.mode=='mix-check':
-        if not a.mix_sha256 or any((a.arm,a.output,a.d300,a.d300_sha256,a.representatives,a.margin_sha256,a.crop_sha256,a.ring_sha256,a.pairloss_sha256,a.floor_sha256,a.truck_sha256)): p.error('expected exact expansion and mix protocols, no output')
+        if not a.mix_sha256 or any((a.arm,a.output,a.d300,a.d300_sha256,a.representatives,a.margin_sha256,a.crop_sha256,a.ring_sha256,a.pairloss_sha256,a.floor_sha256,a.truck_sha256,a.frontier_sha256)): p.error('expected exact expansion and mix protocols, no output')
         _,cfg,pair,old=configuration(a.config_sha256); _,spec=mix_configuration(a.mix_sha256,a.config_sha256)
         _,_,pool,inv,d100,d300,plan,parent=context(cfg,pair,old,'e2')
         arms,_=mix_selections(spec,a.config_sha256,cfg['seed'],pair,pool,inv,d100,d300,parent,plan,old,scratch)
@@ -1149,7 +1204,7 @@ def main():
     if not (a.arm and a.output): p.error('run requires arm and output')
     if bool(a.mix_sha256)!=bool(a.representatives) or (a.mix_sha256 and a.arm!='e2'):
         p.error('mix training requires matching E2 mixture digest and one new quota')
-    treatments=sum(bool(v) for v in (a.margin_sha256,a.crop_sha256,a.ring_sha256,a.pairloss_sha256,a.floor_sha256,a.truck_sha256))
+    treatments=sum(bool(v) for v in (a.margin_sha256,a.crop_sha256,a.ring_sha256,a.pairloss_sha256,a.floor_sha256,a.truck_sha256,a.frontier_sha256))
     if treatments and (a.arm!='e2' or a.mix_sha256 or treatments!=1):
         p.error('expected only one isolated E2 treatment')
     if (a.arm=='d' and (a.d300 or a.d300_sha256)) or (a.arm!='d' and not(a.d300 and a.d300_sha256)):
@@ -1157,7 +1212,8 @@ def main():
     run(a.arm,a.config_sha256,scratch,checked_output(a.output),
         None if not a.d300 else checked_output(a.d300,existing=True),a.d300_sha256,
           mix_sha=a.mix_sha256,representatives=a.representatives,margin_sha=a.margin_sha256,crop_sha=a.crop_sha256,
-          ring_sha=a.ring_sha256,pairloss_sha=a.pairloss_sha256,floor_sha=a.floor_sha256,truck_sha=a.truck_sha256)
+          ring_sha=a.ring_sha256,pairloss_sha=a.pairloss_sha256,floor_sha=a.floor_sha256,truck_sha=a.truck_sha256,
+          frontier_sha=a.frontier_sha256)
 
 
 if __name__=='__main__':

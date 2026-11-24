@@ -240,7 +240,7 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `runs/truck_shift/` 留 [卡车抬分与排序诊断](specs/s7/plan.md#卡车抬分与排序诊断)的共同框重放与匿名边界证据，不复制原预测或原图。
 
-`scripts/night_frontier.py` 是 [卡车预算边界排序](specs/s7/plan.md#卡车预算边界排序)的训练侧 `probe` / `verify-probe` 入口；`runs/frontier_<编号>/` 留原训练点、配对与梯度摘要、执行代码和身份，不留特征或内存队列。`tests/train/test_night_frontier.py` 保护配对范围、两端梯度和平移不变性。
+`scripts/night_frontier.py` 是卡车预算边界排序的训练侧入口：`probe` 为原 32 批局部历史，`probe-full` 为[全程历史](specs/s7/plan.md#卡车全程历史排序)，`verify-probe` 校验两种封存。`runs/frontier_<编号>/` 留原训练点、配对与梯度摘要、执行代码和身份，不留特征或内存队列。`tests/train/test_night_frontier.py` 保护配对范围、两端梯度、平移不变性和折回时的偏置隔离。全程历史正式对照由 `scripts/night_expand.py run --frontier-sha256` 接收过门的封存，结果仍归 `runs/expand_<编号>/`。
 
 `runs/frontier_diag/` 留 [卡车配对支持分解](specs/s7/plan.md#卡车配对支持分解)的匿名候选与逐层配对摘要，不留原图或特征。
 
