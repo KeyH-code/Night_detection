@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "expand_sha256": "643cb8763d4aa34c7213f5429e4b62b5a5ae9b418f70d1b29d577bac03bde0d1",
+  "balanced_manifest_sha256": "71c2942af5343795066793488d661b68e4e6d5701027fd0f6f19c8e298722d35",
+  "seed": 43,
+  "classes": [2, 3, 4],
+  "weight": 0.5,
+  "margin": 0.75
+}

@@ -43,7 +43,7 @@ def validate(cfg):
 
 
 def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform=None,rates=None,prefix_verify=None,
-               target_only=False,batch_transform=None):
+               target_only=False,batch_transform=None,classification_bce=None):
     from torch.nn.modules.batchnorm import _BatchNorm
     from ultralytics.nn.tasks import load_checkpoint
     from ultralytics.utils.loss import v8DetectionLoss
@@ -61,6 +61,9 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
     model.args=SimpleNamespace(**args)
     check_equal('frozen six classes', NAMES,list(model.names.values()))
     day_prefix=len(payloads['day'])
+    if classification_bce is not None:
+        check_equal('explicit class treatment excludes all other interventions', (False,None,None,None,None),
+                    (target_only,transform,rates,batch_transform,prefix_verify))
     if batch_transform is not None:
         check_equal('one mix treatment at a time',(False,None,None),(target_only,transform,rates))
     if target_only:
@@ -101,12 +104,15 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
         positive_counts.add_((target[1,:,3:5]>0).sum(dim=0))
         return focused_bce(scores,target,cfg['positive_weight'],cfg['negative_gain'],cfg['hard_per_class'])
 
-    focused=transform is None and rates is None and not target_only and batch_transform is None
-    if focused:
+    focused=transform is None and rates is None and not target_only and batch_transform is None and classification_bce is None
+    if classification_bce is not None:
+        loss_fn.bce=classification_bce
+    elif focused:
         loss_fn.bce=objective
     payload=payloads['day'] | payloads['night']
     trace=[]; seen=[]
-    mode='paste' if batch_transform is not None else 'target' if target_only else 'long' if rates is not None else 'focus' if focused else 'style'
+    mode=('margin' if classification_bce is not None else 'paste' if batch_transform is not None else 'target'
+          if target_only else 'long' if rates is not None else 'focus' if focused else 'style')
     for step in range(count):
         if time.monotonic() >= until:
             raise ContractError('Local focus run exceeded its time budget')

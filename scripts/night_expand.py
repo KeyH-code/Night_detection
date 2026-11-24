@@ -106,6 +106,15 @@ def mix_configuration(digest,expand_digest):
     return raw,spec
 
 
+def margin_configuration(digest, expand_digest):
+    raw = read_sealed_bytes(ROOT, 'configs/margin.json', digest, [])
+    spec = json.loads(raw)
+    keys = ('schema_version', 'expand_sha256', 'seed', 'classes', 'weight', 'margin')
+    check_equal('registered margin intervention', (1, expand_digest, 43, [2, 3, 4], .5, .75),
+                tuple(spec[k] for k in keys))
+    return raw, spec
+
+
 def expanded_plan(old_plan, slots, seed, salt):
     if len(old_plan)!=2000 or len(slots)!=300 or len(set(slots))!=300:
         raise ContractError('Expected 2000 paired microbatches and 300 input slots')
@@ -310,7 +319,31 @@ def compare(arm,phase,out,cfg,pair,policy,ref,baseline,night_approved,d_pair,can
     return result
 
 
-def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,representatives=None):
+def margin_reference(spec, digest, random_parent):
+    folder = ROOT/'runs/expand_003'
+    seal, state = load_run(folder, spec['balanced_manifest_sha256'])
+    check_equal('exact untreated balanced E2', ('e2', 43, digest, random_parent, None, None),
+                (state['arm'], state['seed'], state['config_sha256'], state['d300_parent'],
+                 state.get('e2_mix'), state.get('margin')))
+    return folder, seal, adapt._json(folder, seal, 'selection.json')
+
+
+def compare_margin(result, spec, digest, random_parent, approved, candidate, policy):
+    folder, seal, _ = margin_reference(spec, digest, random_parent)
+    rel = '43/dev/night'
+    rows = accept.sealed_objects(folder, seal, f'{rel}/objects.jsonl.gz', 'night_dev', approved, [])
+    base = adapt._json(folder, seal, f'{rel}/metrics.json')['workpoints']
+    effects_ = effects([(rows, base), candidate], [-1, 1], policy)
+    day = adapt._json(folder, seal, '43/dev/evaluation.json')['assessment']['day_protection']
+    names = ('truck', 'tram')
+    gains = {n: candidate[1][n]['tp'] - base[n]['tp'] for n in names}
+    result['margin_vs_balanced'] = {'night': effects_, 'tail_gain_tp': gains,
+                                    'day_macro_delta': result['day_candidate_vs_a']['macro_delta'] - day['macro_delta'],
+                                    'continue_gate': result['day_candidate_vs_a']['met'] and min(gains.values()) >= 3 and
+                                    any(effects_['effects'][n]['ci95'][0] > 0 for n in names)}
+
+
+def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,representatives=None,margin_sha=None):
     from night_run import CODE
     from seed_eval import probe_gpu
 
@@ -323,8 +356,19 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
         check_equal('D300 must be completed first with same policy',('d',seed,digest),(ds['arm'],ds['seed'],ds['config_sha256']))
         dc=verify(d_path,d_digest)
         check_equal('verified random 300 arm','d',dc['arm'])
-    mix=None
-    if mix_sha:
+    mix=None; margin=None
+    if margin_sha:
+        if arm != 'e2' or mix_sha or representatives:
+            raise ContractError('Expected one isolated E2 margin treatment')
+        margin_raw, spec = margin_configuration(margin_sha, digest)
+        random_parent = {'run': d_path.name, 'sha256': d_digest}
+        _, _, chosen = margin_reference(spec, digest, random_parent)
+        slots = align_slots(d300, chosen['keys'])
+        check_equal('unchanged balanced slots', chosen['slots'], slots)
+        check_equal('balanced E2 already independently replayed', 'e2',
+                    verify(ROOT/'runs/expand_003', spec['balanced_manifest_sha256'])['arm'])
+        margin = {'sha256': margin_sha, 'balanced': spec['balanced_manifest_sha256']}
+    elif mix_sha:
         mix_raw,spec=mix_configuration(mix_sha,digest)
         check_equal('registered internal E2 run and locked random reference',('e2',True,ROOT/'runs/expand_001',spec['random_sha256']),
                     (arm,representatives in (133,67),d_path,d_digest))
@@ -337,6 +381,8 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
         chosen=select(arm,seed,inventory,pool,d100,d300,parent,pair,scratch)
         slots=align_slots(d300,chosen['keys'])
     plan=expanded_plan(baseplan,slots,seed,old['schedule_salt'])
+    if margin:
+        check_equal('margin uses the exact untreated schedule', chosen['schedule_sha256'], canonical_hash(plan))
     daykeys=[d[0] for d,_ in plan]
     check_equal('unchanged A weight',identity['A_sha256'],sha256(train.CHECKPOINT))
     versions={name:version(name) for name in train.LIBS}
@@ -357,15 +403,18 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
     try:
         (out/'protocol.json').write_bytes(raw)
         if mix: (out/'mix.json').write_bytes(mix_raw)
+        if margin: (out/'margin.json').write_bytes(margin_raw)
         (out/'code').mkdir()
-        for name in sorted(set(CODE)|{'night_expand.py','night_select.py','night_strategy.py','night_adapt.py','night_train.py','night_accept.py',
-                                      'source_policy.py','tricycle_fusion.py'}):
+        code = set(CODE)|{'night_expand.py','night_select.py','night_strategy.py','night_adapt.py','night_train.py','night_accept.py',
+                          'source_policy.py','tricycle_fusion.py'}
+        for name in sorted(code | ({'night_margin.py','night_focus.py','night_rank.py'} if margin else set())):
             shutil.copyfile(ROOT/'scripts'/name,out/'code'/name)
         write_json(out/'selection.json',{**chosen,'arm':arm,'records':selected,'slots':slots,
                                         'records_sha256':canonical_hash(selected),'schedule_sha256':canonical_hash(plan),
                                         'pool_sha256':pool,'group_count':len({r['group_id'] for r in selected}),
                                         'shared_d300':len(set(d300)&set(slots)),'labels_read_in_selection':False})
-        print(f'{arm.upper()}300: locked 300 unique night images, parent prefix 100, {len(set(d300)&set(slots))} shared D slots.',flush=True)
+        print(f'{arm.upper()}300{" margin" if margin else ""}: locked 300 unique night images, parent prefix 100, '
+              f'{len(set(d300)&set(slots))} shared D slots.',flush=True)
         with tempfile.TemporaryDirectory(dir=scratch,prefix='expand-') as td:
             box=Path(td)
             for k in ('YOLO_CONFIG_DIR','TORCH_HOME','MPLCONFIGDIR','TEMP','TMP','TMPDIR','XDG_CONFIG_HOME'):
@@ -385,8 +434,21 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
             n_payload=train.training_rows(n,rec['records'],'night_pool')
             check_equal('exact unique staged two-domain inputs',(2000,300),(len(d_payload),len(n_payload)))
             write_json(phase/'inputs.json',{**rec,'source_keys':daykeys})
+            objective=None
+            if margin:
+                from night_margin import VehicleMargin
+                objective=VehicleMargin(spec['weight'],spec['margin'])
             with train.telemetry() as monitor:
-                weight,record=train._fit(torch,cv2,d_payload|n_payload,plan,seed,old,phase,200,until)
+                if objective is None:
+                    weight,record=train._fit(torch,cv2,d_payload|n_payload,plan,seed,old,phase,200,until)
+                else:
+                    from night_focus import fit_native
+                    weight,record=fit_native(torch,cv2,{'day':d_payload,'night':n_payload},plan,seed,old,
+                                             {'updates':200},until,phase,classification_bce=objective)
+            if objective is not None:
+                signal=objective.summary()
+                check_margin_signal(signal)
+                record['margin_signal']=signal
             check_equal('exact actual expanded schedule and exposure',
                         (canonical_hash(plan),{k:1 for k in daykeys},dict(Counter(n[0] for _,n in plan))),
                         (record['augment_schedule_sha256'],record['counts']['source'],record['counts']['night']))
@@ -399,6 +461,7 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
             candidate,assessment=adapt._evaluate(torch,weight,phase/'dev',box/'eval',night,dev,policy,ref,d_pairs[seed],a_day,until)
             result=compare(arm,phase,out,cfg,pair,policy,ref,baseline,night_approved,d_pairs[seed],candidate,d_path,d_seal)
             if mix: compare_balanced(result,spec,digest,sd,night_approved,candidate[2:],policy)
+            if margin: compare_margin(result,spec,digest,random_parent,night_approved,candidate[2:],policy)
             write_json(out/'comparison.json',result)
             complete=True
             print(f'{arm.upper()}300: night {assessment["classes_met"]}/5; day={assessment["day_protection"]["met"]}; '
@@ -409,11 +472,19 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
     finally:
         write_json(out/'run.json',{'arm':arm,'seed':seed,'status':'complete' if complete else 'incomplete','error':error,
                                    'seconds':time.monotonic()-start,'config_sha256':digest,'a_sha256':identity['A_sha256'],
-                                   **({'e2_mix':mix} if mix else {}),
+                                    **({'e2_mix':mix} if mix else {}),
+                                    **({'margin':margin} if margin else {}),
                                    'd300_parent':None if d_path is None else {'run':d_path.name,'sha256':d_digest},
                                    'versions':versions,'initial_gpu':gpu,'python':sys.version,'cloud_used':False,
                                    'final_test_executed':False,'source_train':tr['manifest'],'source_dev':dev['manifest'],'night_dev':night['manifest']})
         write_json(out/'manifest.json',{'status':'sealed','files':train._receipt(out)})
+
+
+def check_margin_signal(signal):
+    check_equal('one coupled objective per night microbatch', 2000, signal['calls'])
+    positive, loss = signal['positive_anchors'], signal['extra_unnormalized']
+    if len(positive) != 3 or len(loss) != 3 or min(positive) <= 0 or not all(np.isfinite(x) and x > 0 for x in loss):
+        raise ContractError('Expected positive finite coupled-loss signal in every registered vehicle class')
 
 
 def verify(folder,digest=None):
@@ -423,7 +494,13 @@ def verify(folder,digest=None):
     arm=s['arm']; seed=s['seed']; sd=str(seed)
     proto,identity,pool,inv,d100,d300,baseplan,prior=context(cfg,pair,old,arm)
     choice=adapt._json(folder,seal,'selection.json')
-    mix=s.get('e2_mix'); reps=100
+    mix=s.get('e2_mix'); margin=s.get('margin'); reps=100
+    if margin:
+        _, margin_spec=margin_configuration(margin['sha256'],s['config_sha256'])
+        check_equal('sealed margin protocol and condition', (margin_spec, 'e2', None, margin_spec['balanced_manifest_sha256']),
+                    (adapt._json(folder,seal,'margin.json'),arm,mix,margin['balanced']))
+        _, _, parent_choice=margin_reference(margin_spec,s['config_sha256'],s['d300_parent'])
+        check_equal('exact same verified balanced treatment inputs', parent_choice, choice)
     if mix:
         _,spec=mix_configuration(mix['sha256'],s['config_sha256'])
         check_equal('sealed mix protocol',spec,adapt._json(folder,seal,'mix.json'))
@@ -452,6 +529,7 @@ def verify(folder,digest=None):
     else: slots=align_slots(d300,choice['keys'])
     plan=expanded_plan(baseplan,slots,seed,old['schedule_salt'])
     inputs=adapt._json(folder,seal,f'{sd}/inputs.json'); t=adapt._json(folder,seal,f'{sd}/train.json')
+    if margin: check_margin_signal(t['margin_signal'])
     check_equal('verified 300 authorized input schedules and actual consumption',
                 (slots,canonical_hash([inv[k] for k in slots]),[d[0] for d,_ in plan],canonical_hash(plan),canonical_hash(plan),
                  [[d[0],n[0]] for d,n in plan],dict(Counter(n[0] for _,n in plan)),200,0,seal['files'][f'{sd}/last.pt']['sha256']),
@@ -486,10 +564,13 @@ def verify(folder,digest=None):
     recomputed=compare(arm,folder/sd,folder,cfg,pair,policy,ref,base,approved['night_dev'],d_pair,
                        (*d_pair,rows['night'],results['night']['workpoints']),d_path,d_seal)
     if mix: compare_balanced(recomputed,spec,s['config_sha256'],sd,approved['night_dev'],(rows['night'],results['night']['workpoints']),policy)
+    if margin:
+        compare_margin(recomputed,margin_spec,s['config_sha256'],s['d300_parent'],approved['night_dev'],
+                       (rows['night'],results['night']['workpoints']),policy)
     check_equal('complete paired comparison independently recomputed',recomputed,adapt._json(folder,seal,'comparison.json'))
     return {'arm':arm,'seed':seed,'files_verified':len(seal['files']),'manifest_sha256':sha256(folder/'manifest.json'),
             'night_counts':{n:[p['tp'],p['fp']] for n,p in results['night']['workpoints'].items()},'comparison':recomputed,
-            'seconds':s['seconds'], **({'e2_mix':mix} if mix else {})}
+            'seconds':s['seconds'], **({'e2_mix':mix} if mix else {}), **({'margin':margin} if margin else {})}
 
 
 def checked_output(path,*,existing=False):
@@ -546,23 +627,24 @@ def main():
     p.add_argument('--config-sha256'); p.add_argument('--scratch',type=Path); p.add_argument('--output',type=Path)
     p.add_argument('--d300',type=Path); p.add_argument('--d300-sha256')
     p.add_argument('--mix-sha256'); p.add_argument('--representatives',type=int,choices=(133,67))
+    p.add_argument('--margin-sha256')
     p.add_argument('--diverse-run',type=Path); p.add_argument('--representative-run',type=Path)
     a=p.parse_args()
     if a.mode=='mix-pair':
-        if not (a.diverse_run and a.representative_run) or any((a.output,a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256,a.mix_sha256,a.representatives)):
+        if not (a.diverse_run and a.representative_run) or any((a.output,a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256,a.mix_sha256,a.representatives,a.margin_sha256)):
             p.error('mix-pair requires only --diverse-run and --representative-run')
         print(json.dumps(mix_pair(checked_output(a.diverse_run,existing=True),checked_output(a.representative_run,existing=True)),allow_nan=False))
         return
     if a.diverse_run or a.representative_run: p.error('contrast runs are only for mix-pair')
     if a.mode=='verify':
-        if not a.output or any((a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256,a.mix_sha256,a.representatives)): p.error('verify accepts only --output')
+        if not a.output or any((a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256,a.mix_sha256,a.representatives,a.margin_sha256)): p.error('verify accepts only --output')
         print(json.dumps(verify(checked_output(a.output,existing=True)),allow_nan=False))
         return
     if not (a.config_sha256 and a.scratch): p.error('expected config digest and external scratch')
     scratch=a.scratch.absolute(); _no_reparse(scratch)
     if not scratch.is_dir() or scratch.resolve()!=scratch or scratch.is_relative_to(ROOT): p.error('invalid external scratch')
     if a.mode=='mix-check':
-        if not a.mix_sha256 or any((a.arm,a.output,a.d300,a.d300_sha256,a.representatives)): p.error('expected exact expansion and mix protocols, no output')
+        if not a.mix_sha256 or any((a.arm,a.output,a.d300,a.d300_sha256,a.representatives,a.margin_sha256)): p.error('expected exact expansion and mix protocols, no output')
         _,cfg,pair,old=configuration(a.config_sha256); _,spec=mix_configuration(a.mix_sha256,a.config_sha256)
         _,_,pool,inv,d100,d300,plan,parent=context(cfg,pair,old,'e2')
         arms,_=mix_selections(spec,a.config_sha256,cfg['seed'],pair,pool,inv,d100,d300,parent,plan,old,scratch)
@@ -572,11 +654,13 @@ def main():
     if not (a.arm and a.output): p.error('run requires arm and output')
     if bool(a.mix_sha256)!=bool(a.representatives) or (a.mix_sha256 and a.arm!='e2'):
         p.error('mix training requires matching E2 mixture digest and one new quota')
+    if a.margin_sha256 and (a.arm!='e2' or a.mix_sha256):
+        p.error('margin training is a separate E2 treatment, not a mix')
     if (a.arm=='d' and (a.d300 or a.d300_sha256)) or (a.arm!='d' and not(a.d300 and a.d300_sha256)):
         p.error('E1/E2 require the completed random D300 receipt; random does not accept a parent')
     run(a.arm,a.config_sha256,scratch,checked_output(a.output),
         None if not a.d300 else checked_output(a.d300,existing=True),a.d300_sha256,
-        mix_sha=a.mix_sha256,representatives=a.representatives)
+         mix_sha=a.mix_sha256,representatives=a.representatives,margin_sha=a.margin_sha256)
 
 
 if __name__=='__main__':

@@ -211,3 +211,12 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/night_consensus.py parents --scratch '<同盘项目外任务目录>' --output runs/consensus_001
 .venv-train/Scripts/python.exe -B scripts/night_consensus.py verify --output runs/consensus_001
 ```
+
+### 原生车型分差
+
+[`margin.json`](margin.json) 锁定 [S7 单臂](../specs/s7/plan.md#原生车型分差)，只对原平衡 E2-300 同名单、同顺序的已分配夜间车辆正例加车型分差项。与 `--mix-sha256` 排他；同一 `verify` 核验训练消费及对原平衡臂的开发配对。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_expand.py run --arm e2 --config-sha256 '<expand.json SHA-256>' --margin-sha256 '<margin.json SHA-256>' --d300 runs/expand_001 --d300-sha256 '<随机封存清单 SHA-256>' --scratch '<项目外任务目录>' --output runs/expand_006
+.venv-train/Scripts/python.exe -B scripts/night_expand.py verify --output runs/expand_006
+```
