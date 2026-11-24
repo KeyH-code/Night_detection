@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "expand_sha256": "643cb8763d4aa34c7213f5429e4b62b5a5ae9b418f70d1b29d577bac03bde0d1",
+  "random_sha256": "8b91b1b1819effae614df6954c8486dbf4183b3c844a8a31f9ce8625640a280f",
+  "balanced_sha256": "71c2942af5343795066793488d661b68e4e6d5701027fd0f6f19c8e298722d35",
+  "e1_receipt_sha256": "b387c750ba6e91be8d83581fba90314b5b9d380b19d4d1af2054c876cdc91002",
+  "representatives": [133, 100, 67],
+  "additional": 200
+}

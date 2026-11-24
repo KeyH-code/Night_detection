@@ -55,3 +55,39 @@ def test_gap_change_uses_shared_group_draws_on_all_four_models():
     result=effects([arm(True),arm(True),arm(False),arm(False)],[1,-1,-1,1],policy)
     assert result['effects']['macro']['delta']==0
     assert result['effects']['macro']['ci95']==[0.,0.]
+
+
+def test_mix_slots_prioritize_balanced_when_a_random_slot_conflicts():
+    from night_expand import mix_slots
+
+    random=[f'd{i}' for i in range(300)]
+    balanced=random[:20]+['b20','b21']+random[22:]
+    proposed=random[:20]+['b20','d20','d21']+random[23:]
+    slots,receipt=mix_slots(random,balanced,proposed)
+    assert slots[20]=='b20' and slots[21]=='d21' and slots[22]=='d20'
+    assert receipt=={'balanced_shared': 298, 'random_shared':299, 'random_slot_changes':['d20']}
+    assert slots==mix_slots(random,balanced,proposed)[0]
+
+
+def test_mix_coverage_weights_groups_and_uses_fixed_reference_low_groups():
+    import numpy as np
+    from night_expand import coverage_stats
+
+    keys=['a1','a2','b','c','d']
+    z=np.array([[1.,0.],[1.,0.],[0.,1.],[-1.,0.],[0.,-1.]])
+    groups=['a','a','b','c','d']
+    base,extra=coverage_stats(keys,z,groups,['a1'],['a1','c'],['c'])
+    assert base['group_mean']==.5 and extra['group_mean']==.75
+    assert base['fixed_low_quartile_mean']==0 and extra['fixed_low_quartile_mean']==1
+
+
+def test_mix_ambiguous_or_wrong_representative_prefix_is_rejected():
+    from night_expand import check_mix_prefix
+    from source_contract import ContractError
+
+    def row(seq,n):
+        return {'steps':[{'kind':'representative' if i<n else 'diverse','key':key} for i,key in enumerate(seq)]}
+    arms={2:row(['a','b','c','d'],2),3:row(['a','b','d','c'],3),1:row(['a','c','d','b'],1)}
+    check_mix_prefix(arms,4)
+    arms[1]=row(['b','a','d','c'],1)
+    with pytest.raises(ContractError): check_mix_prefix(arms,4)

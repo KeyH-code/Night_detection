@@ -26,6 +26,7 @@ from night_contract import POOL, POOL_MANIFEST, ROOT, _no_reparse, _records, rea
 from source_contract import ContractError, canonical_hash, check_equal, read_json, sha256, write_json
 
 KINDS = ('d','e1','e2')
+MIX_QUOTAS = (133,100,67)
 
 
 def random_prefix(keys, base, seed):
@@ -44,6 +45,65 @@ def align_slots(d,e):
     shared=set(e); original=set(d)
     fill=iter(k for k in e if k not in original)
     return [k if k in shared else next(fill) for k in d]
+
+
+def mix_slots(random, balanced, selected):
+    if any(len(x)!=300 or len(set(x))!=300 for x in (random,balanced,selected)):
+        raise ContractError('Expected unique 300-image slot inventories')
+    chosen=set(selected); slots=[None]*300
+    for i,key in enumerate(balanced):
+        if key in chosen: slots[i]=key
+    placed=chosen & set(balanced)
+    for i,key in enumerate(random):
+        if slots[i] is None and key in chosen and key not in placed:
+            slots[i]=key; placed.add(key)
+    remainder=iter(k for k in selected if k not in placed)
+    slots=[next(remainder) if k is None else k for k in slots]
+    check_equal('exact mechanism image set',chosen,set(slots))
+    return slots,{'balanced_shared':len(chosen & set(balanced)), 'random_shared':len(chosen & set(random)),
+                  'random_slot_changes':[k for i,k in enumerate(random) if k in chosen and slots[i]!=k]}
+
+
+def coverage_stats(keys,z,groups,balanced,selected,additional):
+    if len(groups)!=len(keys) or not balanced or not selected:
+        raise ContractError('Expected both fixed representative coverage populations')
+    z=strategy._validate_vectors(keys,z)
+    ix={k:i for i,k in enumerate(keys)}
+    _,g=np.unique(groups,return_inverse=True)
+    sizes=np.bincount(g)
+
+    def cover(items):
+        sims=(1+np.clip(z@z[[ix[k] for k in items]].T,-1,1))/2
+        return np.bincount(g,weights=sims.max(axis=1))/sizes
+
+    base=cover(balanced); cand=cover(selected)
+    low=np.argsort(base,kind='stable')[:max(1,len(base)//4)]
+    def stats(x):
+        return {'group_mean':float(x.mean()),'group_p10':float(np.quantile(x,.10)),
+                'fixed_low_quartile_mean':float(x[low].mean()),'fixed_low_quartile_groups':len(low)}
+    b,c=stats(base),stats(cand)
+    c['fixed_low_quartile_change']=c['fixed_low_quartile_mean']-b['fixed_low_quartile_mean']
+    a=z[[ix[k] for k in additional]]
+    c['additional_pairwise_cosine_mean']=float((a@a.T)[np.triu_indices(len(a),1)].mean()) if len(a)>1 else None
+    return b,c
+
+
+def check_mix_prefix(arms,total):
+    previous=[]
+    for n,arm in sorted(arms.items()):
+        steps=arm['steps']
+        check_equal('ordered stage budgets',['representative']*n+['diverse']*(total-n),[x['kind'] for x in steps])
+        now=[x['key'] for x in steps[:n]]
+        check_equal('shorter representative prefix',previous,now[:len(previous)])
+        previous=now
+
+
+def mix_configuration(digest,expand_digest):
+    raw=read_sealed_bytes(ROOT,'configs/e2_300.json',digest,[])
+    spec=json.loads(raw)
+    check_equal('approved three-arm E2 internal mixture',(1,expand_digest,list(MIX_QUOTAS),200),
+                (spec['schema_version'],spec['expand_sha256'],spec['representatives'],spec['additional']))
+    return raw,spec
 
 
 def expanded_plan(old_plan, slots, seed, salt):
@@ -92,7 +152,7 @@ def _selection_worker(box,digest,seed,base):
     print(json.dumps({'keys':keys,'reads':[POOL_MANIFEST]}),flush=True)
 
 
-def select(arm,seed,inv,digest,d100,d300,parent,pair,scratch):
+def select(arm,seed,inv,digest,d100,d300,parent,pair,scratch,*,representatives=100):
     if arm=='d':
         approved=read_sealed_bytes(train.NIGHT,POOL_MANIFEST,digest,[])
         with tempfile.TemporaryDirectory(dir=scratch,prefix='expand-blind-') as td:
@@ -105,7 +165,7 @@ def select(arm,seed,inv,digest,d100,d300,parent,pair,scratch):
         return {'keys':d300,'reads':a['reads'],'parent_keys':d100,'steps':None}
     folder=ROOT/'runs/pool_002'
     seal=read_sealed_json(folder,'manifest.json',pair['pool_manifest_sha256']['e1'],[])
-    params=({'shortlist':128,'quota':40} if arm=='e1' else {'representatives':100,'diverse':100,'neighbors':5})
+    params=({'shortlist':128,'quota':40} if arm=='e1' else {'representatives':representatives,'diverse':200-representatives,'neighbors':5})
     files=('features.npz','scores.npz') if arm=='e1' else ('features.npz',)
     with tempfile.TemporaryDirectory(dir=scratch,prefix='expand-rank-') as td:
         box=Path(td)
@@ -159,6 +219,54 @@ def load_run(folder,digest=None):
     return seal,state
 
 
+def mix_reference(spec,digest):
+    p=ROOT/'runs/expand_003'; seal,state=load_run(p,spec['balanced_sha256'])
+    check_equal('exact balanced expansion identity',('e2',43,digest,{'run':'expand_001','sha256':spec['random_sha256']},None),
+                (state['arm'],state['seed'],state['config_sha256'],state['d300_parent'],state.get('e2_mix')))
+    return p,seal,adapt._json(p,seal,'selection.json')
+
+
+def mix_selections(spec,digest,seed,pair,pool,inventory,d100,d300,parent,baseplan,old,scratch):
+    balanced_path,balanced_seal,balanced=mix_reference(spec,digest)
+    check_equal('verified history is the approved E2 reference','e2',verify(balanced_path,spec['balanced_sha256'])['arm'])
+    arms={n:select('e2',seed,inventory,pool,d100,d300,parent,pair,scratch,representatives=n) for n in MIX_QUOTAS}
+    check_mix_prefix(arms,spec['additional'])
+    check_equal('balanced ordered lists and stages match release',arms[100],{k:balanced[k] for k in arms[100]})
+    check_equal('balanced slots and actual schedule re-created',
+                (balanced['slots'],balanced['schedule_sha256']),
+                (align_slots(d300,arms[100]['keys']),canonical_hash(expanded_plan(baseplan,balanced['slots'],seed,old['schedule_salt']))))
+    e1=ROOT/'runs/expand_002'; seal,_=load_run(e1,spec['e1_receipt_sha256'])
+    old_union=set(d300)|set(balanced['keys'])|set(adapt._json(e1,seal,'selection.json')['keys'])
+    keys,z=strategy.load_features(ROOT/'runs/pool_002/features.npz')
+    groups=[inventory[k]['group_id'] for k in keys]
+    for n,arm in arms.items():
+        x=set(arm['keys']); slots,alignment=mix_slots(d300,balanced['slots'],arm['keys'])
+        coverage_ref,stats=coverage_stats(keys,z,groups,balanced['keys'],arm['keys'],arm['keys'][100:])
+        other=arms[200-n]['keys']; other_slots=mix_slots(d300,balanced['slots'],other)[0]
+        arm['mix_audit']={**alignment,'balanced_replayed':True,'coverage':stats,'coverage_reference':coverage_ref,
+                          'overlap_other_pole':len(x & set(other)) if n!=100 else None,
+                          'other_pole_common_slot_changes':sum(k in set(other_slots) and k!=other_slots[i] for i,k in enumerate(slots)) if n!=100 else None,
+                          'potential_new_vs_s7_union':len(x-old_union),'same_set_as':[]}
+    for n in (133,67):
+        check=[('balanced',arms[100]['keys']),('random',d300)]
+        if n==67: check.append(('representative',arms[133]['keys']))
+        arms[n]['mix_audit']['same_set_as']=[name for name,ls in check if set(ls)==set(arms[n]['keys'])]
+    return arms,balanced['slots']
+
+
+def compare_balanced(result,spec,digest,sd,approved,night_pair,policy):
+    folder,seal,_=mix_reference(spec,digest)
+    rel=f'{sd}/dev/night'
+    rows=accept.sealed_objects(folder,seal,f'{rel}/objects.jsonl.gz','night_dev',approved,[])
+    metrics=adapt._json(folder,seal,f'{rel}/metrics.json')
+    balanced_day=adapt._json(folder,seal,f'{sd}/dev/evaluation.json')['assessment']['day_protection']
+    day=result['day_candidate_vs_a']
+    result['mix_vs_balanced']=effects([night_pair,(rows,metrics['workpoints'])],[1,-1],policy)
+    result['mix_day_vs_balanced']={'macro':day['macro_delta']-balanced_day['macro_delta'],
+                                   'per_class':{k:day['per_class'][k]['delta']-v['delta'] for k,v in balanced_day['per_class'].items()}}
+    return result
+
+
 def effects(arms,coefficients,policy):
     first=arms[0][0]
     identity=accept._pair_identity(first)
@@ -202,7 +310,7 @@ def compare(arm,phase,out,cfg,pair,policy,ref,baseline,night_approved,d_pair,can
     return result
 
 
-def run(arm,digest,scratch,out,d_path=None,d_digest=None):
+def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,representatives=None):
     from night_run import CODE
     from seed_eval import probe_gpu
 
@@ -215,8 +323,19 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None):
         check_equal('D300 must be completed first with same policy',('d',seed,digest),(ds['arm'],ds['seed'],ds['config_sha256']))
         dc=verify(d_path,d_digest)
         check_equal('verified random 300 arm','d',dc['arm'])
-    chosen=select(arm,seed,inventory,pool,d100,d300,parent,pair,scratch)
-    slots=align_slots(d300,chosen['keys'])
+    mix=None
+    if mix_sha:
+        mix_raw,spec=mix_configuration(mix_sha,digest)
+        check_equal('registered internal E2 run and locked random reference',('e2',True,ROOT/'runs/expand_001',spec['random_sha256']),
+                    (arm,representatives in (133,67),d_path,d_digest))
+        arms,balanced_slots=mix_selections(spec,digest,seed,pair,pool,inventory,d100,d300,parent,baseplan,old,scratch)
+        chosen=arms[representatives]
+        check_equal('duplicate sets are not retrained',[],chosen['mix_audit']['same_set_as'])
+        slots,_=mix_slots(d300,balanced_slots,chosen['keys'])
+        mix={'sha256':mix_sha,'representatives':representatives}
+    else:
+        chosen=select(arm,seed,inventory,pool,d100,d300,parent,pair,scratch)
+        slots=align_slots(d300,chosen['keys'])
     plan=expanded_plan(baseplan,slots,seed,old['schedule_salt'])
     daykeys=[d[0] for d,_ in plan]
     check_equal('unchanged A weight',identity['A_sha256'],sha256(train.CHECKPOINT))
@@ -237,6 +356,7 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None):
     error=None; complete=False
     try:
         (out/'protocol.json').write_bytes(raw)
+        if mix: (out/'mix.json').write_bytes(mix_raw)
         (out/'code').mkdir()
         for name in sorted(set(CODE)|{'night_expand.py','night_select.py','night_strategy.py','night_adapt.py','night_train.py','night_accept.py',
                                       'source_policy.py','tricycle_fusion.py'}):
@@ -278,6 +398,7 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None):
             policy,ref,baseline,d_pairs,a_day=adapt._reference(pair,protocol,dev,night,[seed])
             candidate,assessment=adapt._evaluate(torch,weight,phase/'dev',box/'eval',night,dev,policy,ref,d_pairs[seed],a_day,until)
             result=compare(arm,phase,out,cfg,pair,policy,ref,baseline,night_approved,d_pairs[seed],candidate,d_path,d_seal)
+            if mix: compare_balanced(result,spec,digest,sd,night_approved,candidate[2:],policy)
             write_json(out/'comparison.json',result)
             complete=True
             print(f'{arm.upper()}300: night {assessment["classes_met"]}/5; day={assessment["day_protection"]["met"]}; '
@@ -288,6 +409,7 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None):
     finally:
         write_json(out/'run.json',{'arm':arm,'seed':seed,'status':'complete' if complete else 'incomplete','error':error,
                                    'seconds':time.monotonic()-start,'config_sha256':digest,'a_sha256':identity['A_sha256'],
+                                   **({'e2_mix':mix} if mix else {}),
                                    'd300_parent':None if d_path is None else {'run':d_path.name,'sha256':d_digest},
                                    'versions':versions,'initial_gpu':gpu,'python':sys.version,'cloud_used':False,
                                    'final_test_executed':False,'source_train':tr['manifest'],'source_dev':dev['manifest'],'night_dev':night['manifest']})
@@ -301,6 +423,14 @@ def verify(folder,digest=None):
     arm=s['arm']; seed=s['seed']; sd=str(seed)
     proto,identity,pool,inv,d100,d300,baseplan,prior=context(cfg,pair,old,arm)
     choice=adapt._json(folder,seal,'selection.json')
+    mix=s.get('e2_mix'); reps=100
+    if mix:
+        _,spec=mix_configuration(mix['sha256'],s['config_sha256'])
+        check_equal('sealed mix protocol',spec,adapt._json(folder,seal,'mix.json'))
+        reps=mix['representatives']
+        check_equal('sealed mix arm and quotas',('e2',True,{'representatives':reps,'diverse':200-reps,'neighbors':5}),
+                    (arm,reps in (133,67),choice['parameters']))
+        check_equal('locked random mix reference',{'run':'expand_001','sha256':spec['random_sha256']},s['d300_parent'])
     check_equal('approved seal and earlier ordered first hundred',(pool,False,d100 if arm=='d' else prior),
                 (choice['pool_sha256'],choice['labels_read_in_selection'],choice['keys'][:100]))
     if arm=='d': check_equal('verified original random prefix',d300,choice['keys'])
@@ -311,9 +441,16 @@ def verify(folder,digest=None):
         if arm=='e1':
             check_equal('verified E1 scores SHA',pool_seal['files']['scores.npz']['sha256'],sha256(pool_dir/'scores.npz'))
             rank=strategy.rank_e1(keys,z,strategy._load_e1_scores(pool_dir/'scores.npz',keys),prior,shortlist=128,quota=40)
-        else: rank=strategy.rank_e2(keys,[inv[k]['group_id'] for k in keys],z,prior,representatives=100,diverse=100,neighbors=5)
+        else: rank=strategy.rank_e2(keys,[inv[k]['group_id'] for k in keys],z,prior,representatives=reps,diverse=200-reps,neighbors=5)
         check_equal('identity of independent ranking',rank,{k:choice[k] for k in rank})
-    slots=align_slots(d300,choice['keys']); plan=expanded_plan(baseplan,slots,seed,old['schedule_salt'])
+    if mix:
+        _,_,balanced=mix_reference(spec,s['config_sha256'])
+        slots,audit=mix_slots(d300,balanced['slots'],choice['keys'])
+        check_equal('independent priority slot replay',audit,{k:choice['mix_audit'][k] for k in audit})
+        h,b=coverage_stats(keys,z,[inv[k]['group_id'] for k in keys],balanced['keys'],choice['keys'],choice['keys'][100:])
+        check_equal('independent group coverage replay',(h,b),(choice['mix_audit']['coverage_reference'],choice['mix_audit']['coverage']))
+    else: slots=align_slots(d300,choice['keys'])
+    plan=expanded_plan(baseplan,slots,seed,old['schedule_salt'])
     inputs=adapt._json(folder,seal,f'{sd}/inputs.json'); t=adapt._json(folder,seal,f'{sd}/train.json')
     check_equal('verified 300 authorized input schedules and actual consumption',
                 (slots,canonical_hash([inv[k] for k in slots]),[d[0] for d,_ in plan],canonical_hash(plan),canonical_hash(plan),
@@ -348,10 +485,11 @@ def verify(folder,digest=None):
         check_equal('verified D300 parent binding',('d',seed,s['config_sha256']),(d_state['arm'],d_state['seed'],d_state['config_sha256']))
     recomputed=compare(arm,folder/sd,folder,cfg,pair,policy,ref,base,approved['night_dev'],d_pair,
                        (*d_pair,rows['night'],results['night']['workpoints']),d_path,d_seal)
+    if mix: compare_balanced(recomputed,spec,s['config_sha256'],sd,approved['night_dev'],(rows['night'],results['night']['workpoints']),policy)
     check_equal('complete paired comparison independently recomputed',recomputed,adapt._json(folder,seal,'comparison.json'))
     return {'arm':arm,'seed':seed,'files_verified':len(seal['files']),'manifest_sha256':sha256(folder/'manifest.json'),
             'night_counts':{n:[p['tp'],p['fp']] for n,p in results['night']['workpoints'].items()},'comparison':recomputed,
-            'seconds':s['seconds']}
+            'seconds':s['seconds'], **({'e2_mix':mix} if mix else {})}
 
 
 def checked_output(path,*,existing=False):
@@ -362,27 +500,83 @@ def checked_output(path,*,existing=False):
     return p
 
 
+def mix_pair(diverse,representative):
+    checked=[verify(p) for p in (diverse,representative)]
+    a,b=[v['e2_mix'] for v in checked]
+    check_equal('direct polar pair shares policy and ordered 67,133',[a['sha256'],67,133],
+                [b['sha256'],a['representatives'],b['representatives']])
+    records=[]; excluded=set(); policy=None; approved=None
+    nights=[]
+    for p in (diverse,representative):
+        m,s=load_run(p); rel=f'{s["seed"]}/dev'
+        _,cfg,pair,_=configuration(s['config_sha256'])
+        af=ROOT/'runs/accept_001'; aseal=read_sealed_json(af,'manifest.json',pair['accept_manifest_sha256'],[])
+        pol=adapt._json(af,aseal,'protocol.json'); policy=policy or pol
+        check_equal('identical E2 policy',policy,pol)
+        if approved is None:
+            entry=s['night_dev']
+            doc=read_sealed_json(train.NIGHT,entry['path'],entry['sha256'],[])
+            approved=accept._index(doc['records'],'night_dev')
+        rows=accept.sealed_objects(p,m,f'{rel}/night/objects.jsonl.gz','night_dev',approved,[])
+        points=adapt._json(p,m,f'{rel}/night/metrics.json')['workpoints']
+        nights.append((rows,points))
+        ev=adapt._json(p,m,f'{rel}/evaluation.json')
+        local={d['key'] for d in ev['night_fusion_caps']}
+        local.update(k for v in ev['night_views'] for kind in ('pre_nms_truncated','max_det_truncated') for k in v['nms'][kind])
+        excluded.update(local); records.append(len(local))
+    result=effects(nights,[1,-1],policy)
+    subset=[]
+    for rows,points in nights:
+        kept=[row for row in rows if row['key'] not in excluded]
+        if not kept: break
+        subset.append((kept,{k:dm.aggregate_point(kept,i,points[k]['threshold']) for i,k in enumerate(accept.CLASSES)}))
+    sensitivity=None if len(subset)!=2 else effects(subset,[1,-1],policy)
+    return {'contrast':'diverse_minus_representative','formal':result,'truncation_sensitivity':sensitivity,
+            'excluded_images':len(excluded),'per_arm_excluded_images':records,
+            'manifest_sha256':[v['manifest_sha256'] for v in checked]}
+
+
 def main():
     if len(sys.argv)==6 and sys.argv[1]=='_draw':
         return _selection_worker(Path(sys.argv[2]).absolute(),sys.argv[3],int(sys.argv[4]),json.loads(sys.argv[5]))
     if len(sys.argv)==5 and sys.argv[1]=='_prepare':
         return prepare(Path(sys.argv[2]).absolute(),sys.argv[3],sys.argv[4])
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode',choices=('run','verify')); p.add_argument('--arm',choices=KINDS)
-    p.add_argument('--config-sha256'); p.add_argument('--scratch',type=Path); p.add_argument('--output',type=Path,required=True)
+    p.add_argument('mode',choices=('run','verify','mix-check','mix-pair')); p.add_argument('--arm',choices=KINDS)
+    p.add_argument('--config-sha256'); p.add_argument('--scratch',type=Path); p.add_argument('--output',type=Path)
     p.add_argument('--d300',type=Path); p.add_argument('--d300-sha256')
+    p.add_argument('--mix-sha256'); p.add_argument('--representatives',type=int,choices=(133,67))
+    p.add_argument('--diverse-run',type=Path); p.add_argument('--representative-run',type=Path)
     a=p.parse_args()
+    if a.mode=='mix-pair':
+        if not (a.diverse_run and a.representative_run) or any((a.output,a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256,a.mix_sha256,a.representatives)):
+            p.error('mix-pair requires only --diverse-run and --representative-run')
+        print(json.dumps(mix_pair(checked_output(a.diverse_run,existing=True),checked_output(a.representative_run,existing=True)),allow_nan=False))
+        return
+    if a.diverse_run or a.representative_run: p.error('contrast runs are only for mix-pair')
     if a.mode=='verify':
-        if any((a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256)): p.error('verify accepts only --output')
+        if not a.output or any((a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256,a.mix_sha256,a.representatives)): p.error('verify accepts only --output')
         print(json.dumps(verify(checked_output(a.output,existing=True)),allow_nan=False))
         return
-    if not (a.arm and a.config_sha256 and a.scratch): p.error('run requires arm, config digest and external scratch')
-    if (a.arm=='d' and (a.d300 or a.d300_sha256)) or (a.arm!='d' and not(a.d300 and a.d300_sha256)):
-        p.error('E1/E2 require the completed random D300 receipt; random does not accept a parent')
+    if not (a.config_sha256 and a.scratch): p.error('expected config digest and external scratch')
     scratch=a.scratch.absolute(); _no_reparse(scratch)
     if not scratch.is_dir() or scratch.resolve()!=scratch or scratch.is_relative_to(ROOT): p.error('invalid external scratch')
+    if a.mode=='mix-check':
+        if not a.mix_sha256 or any((a.arm,a.output,a.d300,a.d300_sha256,a.representatives)): p.error('expected exact expansion and mix protocols, no output')
+        _,cfg,pair,old=configuration(a.config_sha256); _,spec=mix_configuration(a.mix_sha256,a.config_sha256)
+        _,_,pool,inv,d100,d300,plan,parent=context(cfg,pair,old,'e2')
+        arms,_=mix_selections(spec,a.config_sha256,cfg['seed'],pair,pool,inv,d100,d300,parent,plan,old,scratch)
+        print(json.dumps({n:{**a['mix_audit'],'images':len(a['keys']),'groups':len({inv[k]['group_id'] for k in a['keys']}),
+                              'reads':a['reads'],'list_sha256':canonical_hash(a['keys'])} for n,a in arms.items()},allow_nan=False))
+        return
+    if not (a.arm and a.output): p.error('run requires arm and output')
+    if bool(a.mix_sha256)!=bool(a.representatives) or (a.mix_sha256 and a.arm!='e2'):
+        p.error('mix training requires matching E2 mixture digest and one new quota')
+    if (a.arm=='d' and (a.d300 or a.d300_sha256)) or (a.arm!='d' and not(a.d300 and a.d300_sha256)):
+        p.error('E1/E2 require the completed random D300 receipt; random does not accept a parent')
     run(a.arm,a.config_sha256,scratch,checked_output(a.output),
-        None if not a.d300 else checked_output(a.d300,existing=True),a.d300_sha256)
+        None if not a.d300 else checked_output(a.d300,existing=True),a.d300_sha256,
+        mix_sha=a.mix_sha256,representatives=a.representatives)
 
 
 if __name__=='__main__':

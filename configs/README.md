@@ -187,3 +187,12 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/night_expand.py verify --output runs/expand_001
 .venv-train/Scripts/python.exe -B scripts/night_expand.py run --arm e1 --d300 runs/expand_001 --d300-sha256 '<随机封存清单 SHA-256>' --config-sha256 '<expand.json SHA-256>' --scratch '<项目外任务目录>' --output runs/expand_002
 ```
+
+### 300 张 E2 追加配比
+
+[`e2_300.json`](e2_300.json) 锁定 [三档配比](../specs/s7/e2.md)。`mix-check` 只读重放三档、平衡引用和槽位；在正常 E2 入口额外传 `--mix-sha256` 与 `--representatives 133` 或 `67`，才运行一档新训练。只读 `verify` 兼容原扩量与新配比。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_expand.py mix-check --config-sha256 '<expand.json SHA-256>' --mix-sha256 '<e2_300.json SHA-256>' --scratch '<项目外任务目录>'
+.venv-train/Scripts/python.exe -B scripts/night_expand.py mix-pair --diverse-run runs/expand_005 --representative-run runs/expand_004
+```
