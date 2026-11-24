@@ -236,6 +236,8 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `runs/tal_002/` 是 [有轨车辆候选边界](specs/s7/plan.md#有轨车辆候选边界)的观测证据，同类目录只留逐曝光摘要与清单，不留临时观测脚本或候选张量。
 
+`scripts/night_tal.py ring` 复用训练侧预检入口执行 [有轨车辆候选区补位](specs/s7/plan.md#有轨车辆候选区补位)的无更新信号门。正式对照复用 `scripts/night_expand.py run --ring-sha256` 与 `expand_` 封存；`run.json` 绑定已通过预检，`train.json` 留实际补位监督。相关回归在 `tests/train/test_night_tal.py` 与 `tests/train/test_night_expand.py`。
+
 `runs/contour_<编号>/` 留 [训练内轮廓筛查](specs/s7/plan.md#局部轮廓的训练内筛查)的支持、工作点和归档身份，不保存暂存图、裁图、原标签、特征或未入围权重。
 
 `runs/quality_<编号>/` 留 [定位不确定性](specs/s7/plan.md#定位不确定性筛查)的训练内折支持、度量和身份，不保存密集张量、一次性程序或未入围权重。

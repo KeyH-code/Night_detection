@@ -91,3 +91,13 @@ def test_mix_ambiguous_or_wrong_representative_prefix_is_rejected():
     check_mix_prefix(arms,4)
     arms[1]=row(['b','a','d','c'],1)
     with pytest.raises(ContractError): check_mix_prefix(arms,4)
+
+
+@pytest.mark.parametrize(('calls','counts'), [(1999,[4,2,1]), (2000,[4,2,0]), (2000,[4,2,3])])
+def test_ring_requires_consumed_nonzero_supervision_in_the_exact_schedule(calls, counts):
+    from night_expand import check_ring_signal
+    from source_contract import ContractError
+
+    check_ring_signal({'calls':2000,'admitted':4,'assigned':2,'nonzero':1})
+    with pytest.raises(ContractError):
+        check_ring_signal(dict(zip(('calls','admitted','assigned','nonzero'), [calls,*counts], strict=True)))

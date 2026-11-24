@@ -5,11 +5,13 @@ from collections import Counter, defaultdict
 from statistics import fmean
 
 import torch
+from ultralytics.utils.ops import xywh2xyxy, xyxy2xywh
 from ultralytics.utils.tal import TaskAlignedAssigner
 
 from source_contract import ContractError, NAMES, check_equal
 
 BALANCED_SHA = '71c2942af5343795066793488d661b68e4e6d5701027fd0f6f19c8e298722d35'
+BOUNDARY_SHA = 'bb24315ddaf62e5696761c8803259f8af049585cbd6600e0f3a2e59103c65047'
 INDICES = tuple(range(0, 2000, 10))
 
 
@@ -51,6 +53,52 @@ class TailAssigner(TaskAlignedAssigner):
                 # Native normalization mutates these tensors after selecting anchors.
                 self.observe(align.clone(), overlaps.clone(), target)
         return align, overlaps
+
+
+class RingAssigner(TailAssigner):
+    """Keep native TAL except for the preregistered eligible ring positions."""
+    def __init__(self, native, *, enabled=True, observe=None):
+        super().__init__(native, beta=6.)
+        check_equal('registered candidate geometry and limits', (10, 10, [8, 16, 32]),
+                    (native.topk, native.topk2, native.stride))
+        self.enabled, self.observe_ring = enabled, observe
+
+    def get_pos_mask(self, scores, boxes, gt_labels, gt_boxes, points, valid):
+        stock = self.select_candidates_in_gts(points, gt_boxes, valid) & valid.bool()
+        eligible = target_gt(gt_labels, gt_boxes) & (gt_labels[..., 0] == 4) & valid[..., 0].bool()
+        added = torch.zeros_like(stock)
+        if self.enabled:
+            ids = eligible[1].nonzero().flatten()
+            if ids.numel():
+                gt = gt_boxes[1, ids]
+                xywh = xyxy2xywh(gt)
+                xywh[:, 2:].clamp_(min=self.stride_val)
+                bounds = xywh2xyxy(xywh)
+                delta = torch.cat((points[None] - bounds[:, None, :2], bounds[:, None, 2:] - points[None]), -1)
+                gi, ai = ((delta + 4 > 1e-9).all(-1) & ~stock[1, ids]).nonzero(as_tuple=True)
+                gt = gt[gi]; centers = points[ai]
+                wh = gt[:, 2:] - gt[:, :2]
+                envelope = torch.maximum(gt[:, 2:], centers) - torch.minimum(gt[:, :2], centers)
+                bound = wh.prod(-1) / envelope.prod(-1)
+                ciou = self.iou_calculation(gt, boxes[1, ai])
+                accept = (bound >= .75) & (ciou >= .5)
+                added[1, ids[gi[accept]], ai[accept]] = True
+        mask = stock | added
+        align, overlaps = self.get_box_metrics(scores, boxes, gt_labels, gt_boxes, mask)
+        if self.observe_ring is not None:
+            self.observe_ring(stock, mask, align.clone(), overlaps.clone(), eligible)
+        pos = self.select_topk_candidates(align, topk_mask=valid.expand(-1, -1, self.topk).bool())
+        return pos.mul_(mask).mul_(valid.bool()), align, overlaps
+
+
+def ring_decision(stats):
+    base, candidate = stats['base_soft_gt'], stats['candidate_soft_gt']
+    check_equal('registered five class coverage', (5, 5), (len(base), len(candidate)))
+    gates = {'support': stats['base_positive_gt'] >= 12,
+             'ring_signal': stats['ring_gt'] * 10 >= stats['base_positive_gt'],
+             'ciou': stats['base_mean_ciou'] is not None and stats['candidate_mean_ciou'] >= stats['base_mean_ciou'],
+             'soft_gt': all(t >= b for b, t in zip(base, candidate, strict=True))}
+    return [k for k, ok in gates.items() if not ok]
 
 
 def decision(classes):
@@ -166,7 +214,95 @@ class Probe:
                 'dtypes': sorted(map(list, self.dtypes))}
 
 
-def preflight(scratch, out):
+class RingProbe:
+    def __init__(self, native):
+        self.native = native
+        self.counts, self.indirect = Counter(), Counter()
+        self.coverage = [[set() for _ in NAMES] for _ in range(2)]
+        self.tram = defaultdict(list)
+        self.key = None
+
+    def __call__(self, *args):
+        check_equal('probe only accepts a scheduled night key', True, bool(self.key))
+        scores, _, _, labels, boxes, valid = args
+        snapshots = []
+        def capture(*tensors):
+            snapshots.append(tensors)
+        plain = self.native(*args)
+        base = RingAssigner(self.native, enabled=False, observe=capture)(*args)
+        candidate = RingAssigner(self.native, observe=capture)(*args)
+        check_equal('ring disabled replays every native output', True,
+                    all(torch.equal(a, b) for a, b in zip(plain, base, strict=True)))
+        check_equal('full day assignment exactly preserved', True,
+                    all(torch.equal(a[0], b[0]) for a, b in zip(plain, candidate, strict=True)))
+        check_equal('no per-image fallback', False, self.native._oom_warned)
+        self.counts['batches'] += 1
+        if not boxes.shape[1]:
+            check_equal('empty assignment has no geometry', [], snapshots)
+            return plain
+        native_mask, unchanged_mask, align, ciou, eligible = snapshots[0]
+        stock, mask, treated_align, treated_ciou, treated_eligible = snapshots[1]
+        added = mask & ~stock
+        check_equal('exact stock mask and target scope', True, torch.equal(native_mask, unchanged_mask)
+                    and torch.equal(stock, native_mask) and torch.equal(eligible, treated_eligible)
+                    and not bool((stock & ~mask).any() | (added & ~eligible[..., None]).any()))
+        check_equal('all unchanged pairs have exactly native direct scores and CIoU', True,
+                    torch.equal(align[~added], treated_align[~added]) and torch.equal(ciou[~added], treated_ciou[~added]))
+        check_equal('every admitted anchor has valid direct values', True,
+                    bool(torch.isfinite(treated_align).all()) and bool((treated_ciou[added] >= .5).all()))
+        self.counts.update(batches_with_metrics=1, compared_direct_values=align.numel() - int(added.sum()),
+                           admitted_anchors=int(added.sum()))
+
+        def assigned(out, qualities, ring):
+            ids = out[3][1].nonzero().flatten(); owner = out[4][1, ids]
+            soft = out[2][1, ids].amax(-1).to(scores.dtype)
+            data = zip(owner.tolist(), ids.tolist(), qualities[1, owner, ids].tolist(),
+                       soft.tolist(), ring[1, owner, ids].tolist(), strict=True)
+            rows = defaultdict(dict)
+            for g, a, c, s, is_ring in data:
+                rows[g][a] = (c, s, is_ring)
+            return rows
+
+        before, after = assigned(base, ciou, added), assigned(candidate, treated_ciou, added)
+        target = eligible[1].tolist(); cls = labels[1, :, 0].tolist()
+        eligible_counts = added[1].sum(-1).tolist()
+        for g in valid[1, :, 0].nonzero().flatten().tolist():
+            b, t = before[g], after[g]; key = self.key, g
+            c = int(cls[g])
+            for j, anchors in enumerate((b, t)):
+                if any(v[1] > 0 for v in anchors.values()):
+                    self.coverage[j][c].add(key)
+            if not target[g]:
+                self.indirect['non_target_exposures'] += 1
+                self.indirect['anchor_set_changed'] += b.keys() != t.keys()
+                self.indirect['anchor_or_soft_changed'] += b != t
+                continue
+            self.tram[key].append((bool(b), eligible_counts[g], sum(v[2] for v in t.values()),
+                                   sum(v[2] and v[1] > 0 for v in t.values()),
+                                   fmean(v[0] for v in b.values()) if b else 0.,
+                                   fmean(v[0] for v in t.values()) if t else 0.))
+        return plain
+
+    def summary(self):
+        views = list(self.tram.values())
+        supported = [[r for r in v if r[0]] for v in views]
+        supported = [v for v in supported if v]
+        q = [r for v in views for r in v]
+        stats = {'eligible_gt': len(views), 'eligible_exposures': len(q),
+                 'base_positive_gt': len(supported), 'base_positive_exposures': sum(map(len, supported)),
+                 'admitted_gt': sum(any(r[1] for r in v) for v in views),
+                 'assigned_ring_gt': sum(any(r[2] for r in v) for v in views),
+                 'ring_gt': sum(any(r[3] for r in v) for v in supported),
+                 'ring_exposures': sum(r[3] > 0 for v in supported for r in v),
+                 'assigned_ring_anchors': sum(r[2] for r in q), 'soft_ring_anchors': sum(r[3] for r in q),
+                 'soft_class_order': NAMES[:5], 'base_soft_gt': [len(v) for v in self.coverage[0][:5]],
+                 'candidate_soft_gt': [len(v) for v in self.coverage[1][:5]]}
+        stats.update({name: fmean(fmean(r[j] for r in v) for v in supported) if supported else None
+                      for j, name in ((4, 'base_mean_ciou'), (5, 'candidate_mean_ciou'))})
+        return {'ring': stats, 'checks': dict(self.counts), 'indirect': dict(self.indirect)}
+
+
+def preflight(scratch, out, *, ring=False):
     import inspect
     import os
     from pathlib import Path, PurePosixPath
@@ -230,6 +366,12 @@ def preflight(scratch, out):
         night_rows[item['key']] = dict(item, image=image, label=label)
 
     selected = [plan[i] for i in INDICES]
+    if ring:
+        boundary = ROOT/'runs/tal_002'
+        prior = expand.adapt._json(boundary, read_sealed_json(boundary, 'manifest.json', BOUNDARY_SHA, []), 'metrics.json')
+        check_equal('exact original boundary environment and sampled schedule',
+                    (state['a_sha256'], native_sha, canonical_hash(selected), [parent.name, BALANCED_SHA]),
+                    (prior['A_sha256'], prior['native_code_sha256'], prior['sample_plan_sha256'], prior['source']))
     source = [day_rows[d[0]] for d, _ in selected]
     night = [night_rows[k] for k in dict.fromkeys(n[0] for _, n in selected)]
     for r in source:
@@ -259,7 +401,7 @@ def preflight(scratch, out):
                 layer.eval()
         frozen = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
         criterion = v8DetectionLoss(model)
-        probe = Probe(criterion.assigner)
+        probe = (RingProbe if ring else Probe)(criterion.assigner)
         criterion.assigner = probe
         processed = []
         with torch.no_grad(), train.telemetry() as monitor:
@@ -278,8 +420,10 @@ def preflight(scratch, out):
         check_equal('frozen model state untouched', True,
                     all(torch.equal(v.detach().cpu(), frozen[k]) for k, v in model.state_dict().items()))
         stats = probe.summary()
-        failures = decision(stats['classes'])
-        receipt = {**stats, 'failures': failures, 'met': not any(failures.values()), 'updates': 0, 'weights_unchanged': True,
+        failures = ring_decision(stats['ring']) if ring else decision(stats['classes'])
+        met = not failures if ring else not any(failures.values())
+        receipt = {**stats, **({'boundary_sha256': BOUNDARY_SHA, 'intervention': 'ring'} if ring else {}),
+                   'failures': failures, 'met': met, 'updates': 0, 'weights_unchanged': True,
                    'balanced_sha256': BALANCED_SHA, 'expand_sha256': digest, 'A_sha256': state['a_sha256'],
                    'plan_sha256': plan_sha, 'sample_plan_sha256': canonical_hash(selected), 'indices': processed,
                    'reads': reads, 'development_read': False, 'holdout_read': False, 'cloud_used': False,
@@ -310,8 +454,15 @@ def verify(path, digest):
     check_equal('no-update and training-only scope', (list(INDICES), len(INDICES), 0, True, BALANCED_SHA, False, False, False),
                 (v['indices'], v['checks']['batches'], v['updates'], v['weights_unchanged'], v['balanced_sha256'],
                  v['development_read'], v['holdout_read'], v['cloud_used']))
-    failures = decision(v['classes'])
-    check_equal('recomputed TAL gate', (failures, not any(failures.values())), (v['failures'], v['met']))
+    if v.get('intervention') == 'ring':
+        check_equal('ring preregistration basis', BOUNDARY_SHA, v['boundary_sha256'])
+        failures = ring_decision(v['ring'])
+        met = not failures
+    else:
+        check_equal('no other TAL intervention registered', None, v.get('intervention'))
+        failures = decision(v['classes'])
+        met = not any(failures.values())
+    check_equal('recomputed TAL gate', (failures, met), (v['failures'], v['met']))
     return {'manifest_sha256': sha256(path/'manifest.json'), **v}
 
 
@@ -324,7 +475,7 @@ def main():
     from night_contract import ROOT, _no_reparse
 
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode', choices=('probe', 'verify'))
+    p.add_argument('mode', choices=('probe', 'ring', 'verify'))
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--scratch', type=Path)
     p.add_argument('--manifest-sha256')
@@ -345,7 +496,7 @@ def main():
         _no_reparse(scratch)
         if not scratch.is_dir() or scratch.resolve() != scratch or scratch.is_relative_to(ROOT) or scratch.drive != out.drive:
             p.error('Expected a real external scratch directory on the same drive')
-        result = preflight(scratch, out)
+        result = preflight(scratch, out, ring=a.mode == 'ring')
     print(json.dumps(result, allow_nan=False), flush=True)
 
 

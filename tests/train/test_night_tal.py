@@ -70,3 +70,47 @@ def test_any_failed_signal_for_either_class_blocks_training(field, value, reason
     assert decision(stats) == {'truck': [], 'tram': []}
     stats['tram'][field] = value
     assert decision(stats) == {'truck': [], 'tram': [reason]}
+
+
+@pytest.mark.parametrize(('cls', 'width', 'admitted'), [(4, 12, True), (3, 12, False), (4, 8, False), (4, 65, False)])
+def test_ring_changes_only_allowed_night_candidates_and_preserves_raw_target(cls, width, admitted):
+    torch = pytest.importorskip('torch')
+    pytest.importorskip('ultralytics')
+    from ultralytics.utils.tal import TaskAlignedAssigner
+    from night_tal import RingAssigner
+
+    stock = TaskAlignedAssigner(topk=10, num_classes=6, alpha=.5)
+    # Outside the padded native region (width 16 for width 12): x=25 fits,
+    # x=27 cannot attain IoU .75, the next x=25 has poor predicted CIoU, x=28 is beyond the ring.
+    left, right = 16-width/2, 16+width/2
+    gt = torch.tensor([[[left, 10., right, 26.]]] * 2)
+    anchors = torch.tensor([[16., 18.], [25., 18.], [27., 18.], [25., 22.], [28., 18.]] + [[120., 120.]]*5)
+    pred = torch.tensor([[[left, 10., right, 26.], [left, 10., 25., 26.], [left, 10., 27., 26.],
+                          [24., 22., 28., 26.], [left, 10., 28., 26.]] + [[119., 119., 121., 121.]]*5] * 2)
+    scores = torch.full((2, 10, 6), .7)
+    args = scores, pred, anchors, torch.full((2, 1, 1), cls), gt, torch.ones((2, 1, 1))
+    native = stock(*args)
+    replay = RingAssigner(stock, enabled=False)(*args)
+    assert all(torch.equal(a,b) for a,b in zip(native,replay,strict=True))
+    snapshots = []
+    result = RingAssigner(stock, observe=lambda *x: snapshots.append(x))(*args)
+    assert all(torch.equal(a[0], b[0]) for a, b in zip(native, result, strict=True))
+    original, extended, *_ = snapshots[0]
+    assert (extended & ~original).nonzero().tolist() == ([[1, 0, 1]] if admitted else [])
+    if admitted:
+        assert result[3][1, 1] and result[2][1, 1, 4] > 0
+        assert torch.equal(result[1][1, 1], gt[1, 0])
+
+
+@pytest.mark.parametrize(('edit', 'reason'), [
+    ({'base_positive_gt': 11}, 'support'), ({'ring_gt': 1}, 'ring_signal'),
+    ({'candidate_mean_ciou': .599}, 'ciou'), ({'candidate_soft_gt': [3, 4, 4, 6, 12]}, 'soft_gt'),
+])
+def test_ring_signal_checks_surviving_supervision_and_all_five_classes(edit, reason):
+    pytest.importorskip('ultralytics')
+    from night_tal import ring_decision
+
+    stats = dict(base_positive_gt=12, ring_gt=2, base_mean_ciou=.6, candidate_mean_ciou=.6,
+                 base_soft_gt=[3, 4, 5, 6, 12], candidate_soft_gt=[3, 4, 5, 6, 12])
+    assert ring_decision(stats) == []
+    assert ring_decision({**stats, **edit}) == [reason]
