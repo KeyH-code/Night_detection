@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "expand_sha256": "643cb8763d4aa34c7213f5429e4b62b5a5ae9b418f70d1b29d577bac03bde0d1",
+  "balanced_manifest_sha256": "71c2942af5343795066793488d661b68e4e6d5701027fd0f6f19c8e298722d35",
+  "support_manifest_sha256": "1452c3e45ae654160d562e5c97676ce40234894e7a9a46b9842cb93616042516",
+  "estimate": {"size": 0.8, "visible": 0.7, "width": [8, 64], "stride": 4},
+  "seed": 43
+}

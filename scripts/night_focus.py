@@ -43,7 +43,7 @@ def validate(cfg):
 
 
 def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform=None,rates=None,prefix_verify=None,
-               target_only=False,batch_transform=None,classification_bce=None,criterion_setup=None):
+               target_only=False,batch_transform=None,classification_bce=None,criterion_setup=None,batch_builder=None):
     from torch.nn.modules.batchnorm import _BatchNorm
     from ultralytics.nn.tasks import load_checkpoint
     from ultralytics.utils.loss import v8DetectionLoss
@@ -66,6 +66,9 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
                     (target_only,transform,rates,batch_transform,prefix_verify))
     if classification_bce is not None and criterion_setup is not None:
         raise ContractError('Only one explicit objective is permitted')
+    if batch_builder is not None:
+        check_equal('geometry must be the only training intervention', (False,None,None,None,None,None,None),
+                    (target_only,transform,rates,batch_transform,prefix_verify,classification_bce,criterion_setup))
     if batch_transform is not None:
         check_equal('one mix treatment at a time',(False,None,None),(target_only,transform,rates))
     if target_only:
@@ -107,7 +110,7 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
         return focused_bce(scores,target,cfg['positive_weight'],cfg['negative_gain'],cfg['hard_per_class'])
 
     focused=(transform is None and rates is None and not target_only and batch_transform is None
-             and classification_bce is None and criterion_setup is None)
+             and classification_bce is None and criterion_setup is None and batch_builder is None)
     if criterion_setup is not None:
         criterion_setup(loss_fn)
     elif classification_bce is not None:
@@ -116,7 +119,7 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
         loss_fn.bce=objective
     payload=payloads['day'] | payloads['night']
     trace=[]; seen=[]
-    mode=('joint' if criterion_setup is not None else 'margin' if classification_bce is not None
+    mode=('crop' if batch_builder is not None else 'joint' if criterion_setup is not None else 'margin' if classification_bce is not None
           else 'paste' if batch_transform is not None else 'target'
           if target_only else 'long' if rates is not None else 'focus' if focused else 'style')
     for step in range(count):
@@ -129,7 +132,8 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
         optimizer.zero_grad(set_to_none=True)
         sums=torch.zeros(3,device='cuda')
         for i,micro in enumerate(plan[step*acc:(step+1)*acc],start=step*acc):
-            batch=train._batch(torch,cv2,payload,micro,original['size'])
+            batch=(train._batch(torch,cv2,payload,micro,original['size']) if batch_builder is None
+                   else batch_builder(torch,cv2,payload,micro,original['size'],i))
             seen.append([item[0] for item in micro])
             if transform is not None:
                 batch['img']=transform(batch['img'],i)

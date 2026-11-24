@@ -228,6 +228,8 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `runs/crop_<编号>/` 留 [夜间局部放大支持](specs/s7/plan.md#夜间局部放大支持)的聚合几何、风险组支持和父封存，不保留裁切图、标签或探针脚本。
 
+`configs/crop.json` 与 `scripts/night_crop.py` 固定局部放大训练，复用 `night_expand.py` 的 `expand_` 正式运行证据；`tests/train/test_night_crop.py` 覆盖槽位、标签及几何。裁切图仅在批次内生成。
+
 `runs/contour_<编号>/` 留 [训练内轮廓筛查](specs/s7/plan.md#局部轮廓的训练内筛查)的支持、工作点和归档身份，不保存暂存图、裁图、原标签、特征或未入围权重。
 
 `runs/quality_<编号>/` 留 [定位不确定性](specs/s7/plan.md#定位不确定性筛查)的训练内折支持、度量和身份，不保存密集张量、一次性程序或未入围权重。

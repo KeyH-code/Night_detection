@@ -258,3 +258,12 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/night_joint.py distill --config-sha256 '<distill.json SHA-256>' --scratch D:/Temp
 .venv-train/Scripts/python.exe -B scripts/night_joint.py verify-distill --config-sha256 '<distill.json SHA-256>' --manifest-sha256 '<hard_005 SHA-256>'
 ```
+
+### 夜间局部放大
+
+[`crop.json`](crop.json) 绑定 [训练局部放大](../specs/s7/plan.md#夜间局部放大支持)的几何收据与固定原平衡臂；原白天回放与开发推理不变。参数处理与配比、车型分差排他。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_expand.py run --arm e2 --config-sha256 '<expand.json SHA-256>' --crop-sha256 '<crop.json SHA-256>' --d300 runs/expand_001 --d300-sha256 '<随机封存清单 SHA-256>' --scratch D:/Temp --output runs/expand_007
+.venv-train/Scripts/python.exe -B scripts/night_expand.py verify --output runs/expand_007
+```
