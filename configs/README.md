@@ -220,3 +220,13 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/night_expand.py run --arm e2 --config-sha256 '<expand.json SHA-256>' --margin-sha256 '<margin.json SHA-256>' --d300 runs/expand_001 --d300-sha256 '<随机封存清单 SHA-256>' --scratch '<项目外任务目录>' --output runs/expand_006
 .venv-train/Scripts/python.exe -B scripts/night_expand.py verify --output runs/expand_006
 ```
+
+### 困难尾类百图
+
+[`hard.json`](hard.json) 固定仅图分数来源和 [S6 名单与支持门](../specs/s6/hard.md)。`select` 生成 `pool_007`；`support` 要求该名单的封存清单 SHA，之后才以只读方式核验入选标签并生成 `hard_001`；`verify` 要求两个清单 SHA，重复隔离验证，不读任何其他标签或启动模型。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_hard.py select --config-sha256 '<hard.json SHA-256>' --scratch D:/Temp
+.venv-train/Scripts/python.exe -B scripts/night_hard.py support --config-sha256 '<hard.json SHA-256>' --selection-sha256 '<pool_007 SHA-256>' --scratch D:/Temp
+.venv-train/Scripts/python.exe -B scripts/night_hard.py verify --config-sha256 '<hard.json SHA-256>' --selection-sha256 '<pool_007 SHA-256>' --support-sha256 '<hard_001 SHA-256>' --scratch D:/Temp
+```

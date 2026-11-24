@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "seed": 43,
+  "a_sha256": "45d212eb674aa60ef2a159652a448cf84eb897ce5a0820ade7dc591fe2afe659",
+  "images_sha256": "04e000c0fb125c2eb7518658a94bbfeaba24cb2885347029af17d637fd7bd4e0",
+  "ready_sha256": "fc9e71fdfd7384e54ce33811844fef7f6e364a44c2d5c97230acfad199fabd5d",
+  "seals": {
+    "pool_001": "469dca716036355bd57499f8ff4aa594e04aa758f8e2674e5f634ed186384203",
+    "pool_002": "47637af7ff85adfc2425d51bb07d85cb6e0091f641899bbdb01d0d2681c96214",
+    "presence_001": "24bbe57df9dbb72d2278a7e6e7d7f0152756c669042ef7c9a243feb5a73c545e",
+    "width_001": "f41a59d32ee5ab10217bbd6833cbeadbd98aa4f412fa5328d34872eb1253b623"
+  },
+  "quota": {"anchors": 20, "hard": 16, "support": 15, "general": 6},
+  "gate": {"groups": 20, "medium_groups": 18, "vehicle_cooccurrence_groups": 8, "other_vehicle_negative_groups": 20, "general_groups": 8}
+}
