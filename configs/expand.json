@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "pair_sha256": "7ecab00157b3e265097a8502e41254c3e00010459e9d79584001ac9bb11e901e",
+  "seed": 43,
+  "night_images": 300,
+  "updates": 200,
+  "max_minutes": 35,
+  "parent_runs": {
+    "e1": "b983a9ebe87fcde3f7847cd1334b7892045f3f62754f0e846a2cd4eed580add8",
+    "e2": "902f891efea87cd242ff4f0e383055cc5ef828607c01e88f4069a21baaa3de9d"
+  }
+}

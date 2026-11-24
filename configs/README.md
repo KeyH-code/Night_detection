@@ -177,3 +177,13 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 ```powershell
 .venv-train/Scripts/python.exe -B scripts/night_paste.py --config-sha256 '<paste.json SHA-256>' --scratch '<项目外任务目录>' --output runs/paste_NNN
 ```
+
+### 300 张嵌套对照
+
+[`expand.json`](expand.json) 锁定 [S7](../specs/s7/plan.md#300-张探索) 的随机先行和同梯度预算。策略入口额外要求已封存随机臂的路径及清单 SHA。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_expand.py run --arm d --config-sha256 '<expand.json SHA-256>' --scratch '<项目外任务目录>' --output runs/expand_001
+.venv-train/Scripts/python.exe -B scripts/night_expand.py verify --output runs/expand_001
+.venv-train/Scripts/python.exe -B scripts/night_expand.py run --arm e1 --d300 runs/expand_001 --d300-sha256 '<随机封存清单 SHA-256>' --config-sha256 '<expand.json SHA-256>' --scratch '<项目外任务目录>' --output runs/expand_002
+```

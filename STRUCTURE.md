@@ -208,6 +208,8 @@ errors.json维护同一配对的探索性工作点增量FP、逐IoU匹配/AP、I
 
 ## S6
 
+S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py` 锁定 [300 张对照](specs/s7/plan.md#300-张探索)。`runs/expand_<编号>/` 保存相应选样、运行、末轮、开发评价与配对证据，不复制图或标签；长期回归归 `tests/train/test_night_expand.py`。
+
 [`specs/s6/plan.md`](specs/s6/plan.md) 维护对照阶段状态、共同配方和 E1→E2 的衔接；[`specs/s6/e1.md`](specs/s6/e1.md) 单独维护 E1 机制对照的假设、配置、执行细节和收尾门。计划不作实验收据，结果归封存 run 及报告。
 
 `scripts/night_train.py` 是随机臂本机训练及开发评价入口，`configs/adapt.json` 锁配方和基线身份；`tests/train/test_night_train.py` 保护轮序、用途与框几何。`runs/d_<编号>/` 保存正式随机臂原始记录：各 seed 的 `inputs.json`、`train.json`、`last.pt`、`dev/` 和采样 GPU 数据；批次预检仅保存证据，不保留预检权重、图片、标签内容或缓存。`protocol.json`、`code/`、`run.json` 及 `manifest.json` 绑定状态和复查范围；代码快照非活动入口。
