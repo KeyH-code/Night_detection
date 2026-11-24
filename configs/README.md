@@ -251,3 +251,10 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/night_joint.py quality --config-sha256 '<quality.json SHA-256>' --scratch D:/Temp
 .venv-train/Scripts/python.exe -B scripts/night_joint.py verify-quality --config-sha256 '<quality.json SHA-256>' --manifest-sha256 '<hard_004 SHA-256>'
 ```
+
+[`distill.json`](distill.json) 锁定 [白天回放蒸馏](../specs/s6/hard.md#白天回放蒸馏)，先在白天训练子集验证冻结教师信号，再运行同名单处理臂并封存 `hard_005`；历史原损失控制只读复用。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_joint.py distill --config-sha256 '<distill.json SHA-256>' --scratch D:/Temp
+.venv-train/Scripts/python.exe -B scripts/night_joint.py verify-distill --config-sha256 '<distill.json SHA-256>' --manifest-sha256 '<hard_005 SHA-256>'
+```

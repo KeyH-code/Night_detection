@@ -28,6 +28,8 @@ SPLIT_CONFIG = 'configs/split.json'
 SPLIT_RUN = 'hard_003'
 QUALITY_CONFIG = 'configs/quality.json'
 QUALITY_RUN = 'hard_004'
+DISTILL_CONFIG = 'configs/distill.json'
+DISTILL_RUN = 'hard_005'
 SEED = 43
 
 
@@ -225,6 +227,9 @@ def split_configuration(digest, variant='split'):
     elif variant == 'quality':
         path = QUALITY_CONFIG
         expected = {'quality': {'localization': 1, 'quality': .5, 'negative': 0, 'per_bucket': 8}}
+    elif variant == 'distill':
+        path = DISTILL_CONFIG
+        expected = {'distill': {'threshold': .3, 'per_class': 32, 'weight': .25, 'preflight_stride': 50}}
     else:
         raise ContractError('Unknown single-factor experiment')
     raw = read_sealed_bytes(ROOT, path, digest, [])
@@ -233,6 +238,8 @@ def split_configuration(digest, variant='split'):
     check_equal('same registered arm order', tuple(expected), tuple(cfg['arms']))
     if variant == 'quality':
         check_equal('fixed local time limit', 35, cfg['max_minutes'])
+    if variant == 'distill':
+        check_equal('fixed local time limit', 40, cfg['max_minutes'])
     return raw, cfg
 
 
@@ -263,12 +270,28 @@ def truncation(evaluation):
     return result
 
 
+def development_metadata(identity):
+    def read(purpose, folder):
+        entry = identity[purpose]
+        doc = read_sealed_json(folder, entry['path'], entry['sha256'], [])
+        check_equal('exact development metadata', (purpose, entry['count']), (doc['purpose'], len(doc['records'])))
+        return {'manifest': entry, 'records': doc['records']}
+
+    return read('source_dev', train.SOURCE), read('night_dev', train.NIGHT)
+
+
 def observed_arm(root, seal, arm, task, identity, policy, ref, a_day, dev, night):
     record = adapt._json(root, seal, f'{arm}/train.json')
     check_consumption(record, task)
     check_equal('same initialization and final checkpoint SHA', (identity['A_sha256'], seal['files'][f'{arm}/last.pt']['sha256']),
                 (record['a_sha256'], record['last_sha256']))
-    if arm != 'control':
+    if arm == 'distill':
+        from night_distill import check_receipt
+
+        check_receipt(record['teacher_signal'])
+        check_equal('frozen teacher SHA and no night input', (identity['A_sha256'], 0),
+                    (record['teacher_sha256'], record['teacher_night_calls']))
+    elif arm != 'control':
         check_signal(record['joint_signal'], arm)
     ev = adapt._json(root, seal, f'{arm}/dev/evaluation.json')
     result, items = {}, {}
@@ -312,21 +335,24 @@ def run(scratch, digest, *, variant=None):
 
     start = time.monotonic()
     split = variant is not None
-    out = ROOT/'runs'/{None: RUN, 'split': SPLIT_RUN, 'quality': QUALITY_RUN}[variant]
+    out = ROOT/'runs'/{None: RUN, 'split': SPLIT_RUN, 'quality': QUALITY_RUN, 'distill': DISTILL_RUN}[variant]
     if out.exists() or out.is_symlink():
         raise ContractError(f'Refusing to overwrite {out.name}')
     split_raw, spec = split_configuration(digest, variant) if split else (None, None)
     raw, cfg, hc, pair, old, protocol, identity, task, audit = configuration(spec['joint_sha256'] if split else digest)
     arms = tuple(spec['arms']) if split else ARMS
     control = split_control(spec, identity, task) if split else None
-    until = start + (spec['max_minutes'] if variant == 'quality' else cfg['max_minutes']) * 60
+    until = start + (spec['max_minutes'] if variant in ('quality', 'distill') else cfg['max_minutes']) * 60
     check_equal('frozen initialization availability', identity['A_sha256'], sha256(train.CHECKPOINT))
     versions = {name: version(name) for name in train.LIBS}
     check_equal('pinned environment versions', identity['versions'], versions)
     gpu = probe_gpu()
     day = train.verify_subset(train.SOURCE, protocol['data']['source_ready_sha256'], 'source_train')
-    dev = train.verify_subset(train.SOURCE, protocol['data']['source_ready_sha256'], 'source_dev')
-    night = verify_dev(train.NIGHT, protocol['data']['night_ready_sha256'])
+    def verify_dev_payloads():
+        return (train.verify_subset(train.SOURCE, protocol['data']['source_ready_sha256'], 'source_dev'),
+                verify_dev(train.NIGHT, protocol['data']['night_ready_sha256']))
+
+    dev, night = development_metadata(identity) if variant == 'distill' else verify_dev_payloads()
     for purpose, contract in (('source_train', day), ('source_dev', dev), ('night_dev', night)):
         check_equal('same fixed source/target contract', identity[purpose], contract['manifest'])
     plan = task['plan']
@@ -343,8 +369,11 @@ def run(scratch, digest, *, variant=None):
             (out/f'{variant}.json').write_bytes(split_raw)
         write_json(out/'slots.json', task['slots'])
         (out/'code').mkdir()
-        for name in sorted(set(CODE)|{'night_joint.py','night_hard.py','night_focus.py','night_rank.py','night_train.py',
-                                     'night_adapt.py','night_accept.py','night_strategy.py','source_policy.py','tricycle_fusion.py'}):
+        sources = set(CODE)|{'night_joint.py','night_hard.py','night_focus.py','night_rank.py','night_train.py',
+                             'night_adapt.py','night_accept.py','night_strategy.py','source_policy.py','tricycle_fusion.py'}
+        if variant == 'distill':
+            sources.add('night_distill.py')
+        for name in sorted(sources):
             shutil.copyfile(ROOT/'scripts'/name, out/'code'/name)
         with tempfile.TemporaryDirectory(dir=scratch, prefix='joint-') as td:
             box = Path(td)
@@ -366,6 +395,21 @@ def run(scratch, digest, *, variant=None):
                       'source_files': len(src_reads), 'night_payload': night_reads}
             check_inputs(inputs, task, target)
             write_json(out/'inputs.json', inputs)
+            if variant == 'distill':
+                from ultralytics.nn.tasks import load_checkpoint
+                from night_distill import DayTeacher, check_receipt, probe
+
+                model, _ = load_checkpoint(str(train.CHECKPOINT), device='cuda')
+                model.eval().requires_grad_(False)
+                check_equal('native six-class unfused teacher', (train.NAMES, False, [8., 16., 32.]),
+                            (list(model.names.values()), model.model[-1].end2end, model.model[-1].stride.tolist()))
+                teacher_args = dict(spec['arms']['distill'])
+                stride = teacher_args.pop('preflight_stride')
+                teacher = DayTeacher(model, **teacher_args)
+                write_json(out/'preflight.json', probe(torch, cv2, teacher, payloads['day'], plan, stride, until))
+                dev, night = verify_dev_payloads()
+                check_equal('identical development read receipts after source-only probe', (identity['source_dev'], identity['night_dev']),
+                            (dev['manifest'], night['manifest']))
             policy, ref, _, anchors, a_day = adapt._reference(pair, protocol, dev, night, [SEED])
             assessments, assessed = {}, {}
             observations = {}
@@ -379,6 +423,16 @@ def run(scratch, digest, *, variant=None):
                     if arm == 'control':
                         weight, rec = train._fit(torch, cv2, payloads['day']|payloads['night'], plan, SEED,
                                                  old, phase, cfg['updates'], until)
+                    elif arm == 'distill':
+                        weight, rec = fit_native(torch, cv2, payloads, plan, SEED, old, cfg, until, phase,
+                                                 criterion_setup=teacher.attach)
+                        rec['teacher_signal'] = teacher.summary()
+                        check_receipt(rec['teacher_signal'])
+                        check_equal('teacher did not obtain gradient or enter training mode', (False, False),
+                                    (model.training, any(p.grad is not None or p.requires_grad for p in model.parameters())))
+                        check_equal('unchanged source teacher checkpoint', identity['A_sha256'], sha256(train.CHECKPOINT))
+                        rec.update(teacher_sha256=identity['A_sha256'], teacher_night_calls=0)
+                        del teacher, model
                     else:
                         obj = JointLoss(**(spec['arms'][arm] if split else cfg['loss']))
                         weight, rec = fit_native(torch, cv2, payloads, plan, SEED, old, cfg, until, phase,
@@ -439,20 +493,18 @@ def verify(digest, manifest_sha, *, variant=None):
     split_raw, spec = split_configuration(digest, variant) if split else (None, None)
     raw, _, hc, pair, _, protocol, identity, task, audit = configuration(spec['joint_sha256'] if split else digest)
     arms = tuple(spec['arms']) if split else ARMS
-    out = ROOT/'runs'/{None: RUN, 'split': SPLIT_RUN, 'quality': QUALITY_RUN}[variant]
+    out = ROOT/'runs'/{None: RUN, 'split': SPLIT_RUN, 'quality': QUALITY_RUN, 'distill': DISTILL_RUN}[variant]
     seal = checked(out, manifest_sha)
     state = adapt._json(out, seal, 'run.json')
     check_equal('complete exact comparison', ('complete', list(arms), digest, identity['A_sha256'], False, False),
                 tuple(state[k] for k in ('status','completed_arms','config_sha256','a_sha256','cloud_used','final_test_executed')))
     check_equal('exact sealed base protocol', raw, ac._checked_file(out, seal, 'protocol.json', []))
     check_equal('identical approved slots', task['slots'], adapt._json(out, seal, 'slots.json'))
-    def dev_only(purpose, folder):
-        entry = identity[purpose]
-        doc = read_sealed_json(folder, entry['path'], entry['sha256'], [])
-        check_equal('exact development metadata', (purpose, entry['count']), (doc['purpose'], len(doc['records'])))
-        return {'manifest': entry, 'records': doc['records']}
+    if variant == 'distill':
+        from night_distill import check_probe
 
-    dev, night = dev_only('source_dev', train.SOURCE), dev_only('night_dev', train.NIGHT)
+        check_probe(adapt._json(out, seal, 'preflight.json'), task['plan'], spec['arms']['distill']['preflight_stride'])
+    dev, night = development_metadata(identity)
     policy, ref, _, anchors, a_day = adapt._reference(pair, protocol, dev, night, [SEED])
     observations = {}
     if split:
@@ -475,7 +527,7 @@ def verify(digest, manifest_sha, *, variant=None):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode', choices=('run', 'verify', 'split', 'verify-split', 'quality', 'verify-quality'))
+    p.add_argument('mode', choices=('run', 'verify', 'split', 'verify-split', 'quality', 'verify-quality', 'distill', 'verify-distill'))
     p.add_argument('--config-sha256', required=True)
     p.add_argument('--scratch', type=Path)
     p.add_argument('--manifest-sha256')
