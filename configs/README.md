@@ -196,3 +196,18 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/night_expand.py mix-check --config-sha256 '<expand.json SHA-256>' --mix-sha256 '<e2_300.json SHA-256>' --scratch '<项目外任务目录>'
 .venv-train/Scripts/python.exe -B scripts/night_expand.py mix-pair --diverse-run runs/expand_005 --representative-run runs/expand_004
 ```
+
+### 尾类跨视图复核
+
+[`night_consensus.py`](../scripts/night_consensus.py) 按 [S7 预登记](../specs/s7/plan.md#尾类跨视图复核) 固定 `expand_003/43` 及开发验收参照。`run` 只在两域开发集上采集 640 镜向和 960 原向辅助视图；`verify` 只读封存复算两臂，不启动模型。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_consensus.py run --scratch '<同盘项目外任务目录>' --output runs/consensus_NNN
+```
+
+[亲本复核](../specs/s7/plan.md#尾类亲本复核)用 `parents`，仅打开嵌套亲本和冻结 A 的封存预测及身份，不打开图像或启动 GPU。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_consensus.py parents --scratch '<同盘项目外任务目录>' --output runs/consensus_001
+.venv-train/Scripts/python.exe -B scripts/night_consensus.py verify --output runs/consensus_001
+```
