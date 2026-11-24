@@ -226,6 +226,8 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `runs/coverage_<编号>/` 留 [训练侧尾类支持](specs/s7/plan.md#训练侧尾类支持)的已选标签核验身份、固定风险组折的量化读数和清单，不保存图、标签正文或重复名单。
 
+`runs/crop_<编号>/` 留 [夜间局部放大支持](specs/s7/plan.md#夜间局部放大支持)的聚合几何、风险组支持和父封存，不保留裁切图、标签或探针脚本。
+
 `runs/contour_<编号>/` 留 [训练内轮廓筛查](specs/s7/plan.md#局部轮廓的训练内筛查)的支持、工作点和归档身份，不保存暂存图、裁图、原标签、特征或未入围权重。
 
 `runs/quality_<编号>/` 留 [定位不确定性](specs/s7/plan.md#定位不确定性筛查)的训练内折支持、度量和身份，不保存密集张量、一次性程序或未入围权重。
