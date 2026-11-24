@@ -323,9 +323,9 @@ def compare(arm,phase,out,cfg,pair,policy,ref,baseline,night_approved,d_pair,can
 def margin_reference(spec, digest, random_parent):
     folder = ROOT/'runs/expand_003'
     seal, state = load_run(folder, spec['balanced_manifest_sha256'])
-    check_equal('exact untreated balanced E2', ('e2', 43, digest, random_parent, None, None, None),
+    check_equal('exact untreated balanced E2', ('e2', 43, digest, random_parent, None, None, None, None, None),
                 (state['arm'], state['seed'], state['config_sha256'], state['d300_parent'],
-                 state.get('e2_mix'), state.get('margin'), state.get('crop')))
+                 state.get('e2_mix'), state.get('margin'), state.get('crop'),state.get('ring'),state.get('pairloss')))
     return folder, seal, adapt._json(folder, seal, 'selection.json')
 
 
@@ -356,6 +356,24 @@ def ring_configuration(probe_sha, expand_sha):
             'tal_sha256': seal['files']['night_tal.py']['sha256'], 'plan_sha256': probe['plan_sha256'],
             'native_code_sha256': probe['native_code_sha256']}
     return spec
+
+
+def pairloss_configuration(probe_sha, expand_sha):
+    from night_pairloss import verify as verify_probe
+
+    probe=verify_probe(ROOT/'runs/pairloss_001',probe_sha)
+    check_equal('only a passed paired-loss probe opens training',(True,expand_sha),(probe['met'],probe['expand_sha256']))
+    return {'sha256':probe_sha,'balanced_manifest_sha256':probe['balanced_sha256'],'plan_sha256':probe['plan_sha256'],
+            'code_sha256':probe['code_sha256'],'native_code_sha256':probe['native_code_sha256'],
+            'matcher_sha256':probe['active_matcher_sha256']}
+
+
+def check_pairloss_signal(signal):
+    check_equal('observed original microbatch budget for ranking', (2000,0,{'truck','tram'}),
+                (signal['calls'],signal['gradient_checked_batches'],set(signal['classes'])))
+    if not 0 < signal['active_batches'] <= signal['calls'] or any(
+            sum(v['pairs_by_bucket'].values())<=0 for v in signal['classes'].values()):
+        raise ContractError('Both tails must consume actual ranking pairs')
 
 
 class RingTraining:
@@ -395,7 +413,7 @@ def check_ring_signal(signal):
         raise ContractError('No valid consumed ring supervision')
 
 
-def compare_ring(result, spec, digest, random_parent, approved, candidate, policy, ref):
+def compare_ring(result, spec, digest, random_parent, approved, candidate, policy, ref, *, variant='ring'):
     parent, seal, _ = margin_reference(spec, digest, random_parent)
     rel = '43/dev/night'
     rows = accept.sealed_objects(parent, seal, f'{rel}/objects.jsonl.gz', 'night_dev', approved, [])
@@ -405,19 +423,20 @@ def compare_ring(result, spec, digest, random_parent, approved, candidate, polic
         name = accept.CLASSES[cid]
         need = accept._recall(ref['workpoints'][name]) * Fraction(policy['recovery_ratio'])
         arms = {}
-        for key, (objects, work) in (('balanced', (rows, points)), ('ring', candidate)):
+        for key, (objects, work) in (('balanced', (rows, points)), (variant, candidate)):
             cv = dm.work_curve(objects, cid)
             exact = need * cv['gt']; target = -(-exact.numerator // exact.denominator)
             events = cv['fp'][cv['tp'] >= target]
             arms[key] = {'target_tp': target, 'tp': work[name]['tp'], 'fp': work[name]['fp'],
                          'min_fp_at_target': int(events.min()) if len(events) else None}
         tails[name] = arms
-    result['ring_vs_balanced'] = {'night': effects([(rows, points), candidate], [-1, 1], policy), 'tails': tails,
+    result[f'{variant}_vs_balanced'] = {'night': effects([(rows, points), candidate], [-1, 1], policy), 'tails': tails,
                                   'continue_gate': result['assessment']['point_met'] and
-                                  all(a['ring']['tp'] >= a['balanced']['tp'] for a in tails.values())}
+                                  all(a[variant]['tp'] >= a['balanced']['tp'] for a in tails.values())}
 
 
-def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,representatives=None,margin_sha=None,crop_sha=None,ring_sha=None):
+def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,representatives=None,margin_sha=None,crop_sha=None,
+        ring_sha=None,pairloss_sha=None):
     from night_run import CODE
     from seed_eval import probe_gpu
 
@@ -430,11 +449,15 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
         check_equal('D300 must be completed first with same policy',('d',seed,digest),(ds['arm'],ds['seed'],ds['config_sha256']))
         dc=verify(d_path,d_digest)
         check_equal('verified random 300 arm','d',dc['arm'])
-    mix=None; margin=None; crop=None; ring=None
-    if margin_sha or crop_sha or ring_sha:
-        if arm != 'e2' or mix_sha or representatives or sum(bool(v) for v in (margin_sha,crop_sha,ring_sha)) != 1:
+    mix=None; margin=None; crop=None; ring=None; pairloss=None
+    if margin_sha or crop_sha or ring_sha or pairloss_sha:
+        if arm != 'e2' or mix_sha or representatives or sum(bool(v) for v in (margin_sha,crop_sha,ring_sha,pairloss_sha)) != 1:
             raise ContractError('Expected one isolated E2 intervention')
-        if ring_sha:
+        if pairloss_sha:
+            spec=pairloss=pairloss_configuration(pairloss_sha,digest)
+            check_equal('use exact preflight-tested pairloss and matcher',(pairloss['code_sha256'],pairloss['matcher_sha256']),
+                        (sha256(ROOT/'scripts/night_pairloss.py'),sha256(Path(dm.__file__))))
+        elif ring_sha:
             spec = ring = ring_configuration(ring_sha, digest)
             check_equal('use exactly the preflight-tested TAL source', ring['tal_sha256'], sha256(ROOT/'scripts/night_tal.py'))
         elif crop_sha:
@@ -464,10 +487,12 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
         chosen=select(arm,seed,inventory,pool,d100,d300,parent,pair,scratch)
         slots=align_slots(d300,chosen['keys'])
     plan=expanded_plan(baseplan,slots,seed,old['schedule_salt'])
-    if margin or crop or ring:
+    if margin or crop or ring or pairloss:
         check_equal('uses the exact untreated schedule', chosen['schedule_sha256'], canonical_hash(plan))
     if ring:
         check_equal('same schedule as passed ring signal', ring['plan_sha256'], canonical_hash(plan))
+    if pairloss:
+        check_equal('same schedule as passed ranking probe',pairloss['plan_sha256'],canonical_hash(plan))
     daykeys=[d[0] for d,_ in plan]
     check_equal('unchanged A weight',identity['A_sha256'],sha256(train.CHECKPOINT))
     versions={name:version(name) for name in train.LIBS}
@@ -495,13 +520,15 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
                           'source_policy.py','tricycle_fusion.py'}
         if margin or crop or ring:
             code.update({'night_focus.py','night_rank.py', 'night_tal.py' if ring else 'night_margin.py' if margin else 'night_crop.py'})
+        if pairloss:
+            code.update({'night_focus.py','night_rank.py','night_pairloss.py'})
         for name in sorted(code):
             shutil.copyfile(ROOT/'scripts'/name,out/'code'/name)
         write_json(out/'selection.json',{**chosen,'arm':arm,'records':selected,'slots':slots,
                                         'records_sha256':canonical_hash(selected),'schedule_sha256':canonical_hash(plan),
                                         'pool_sha256':pool,'group_count':len({r['group_id'] for r in selected}),
                                         'shared_d300':len(set(d300)&set(slots)),'labels_read_in_selection':False})
-        print(f'{arm.upper()}300{" ring" if ring else " crop" if crop else " margin" if margin else ""}: locked 300 unique night images, parent prefix 100, '
+        print(f'{arm.upper()}300{" pairloss" if pairloss else " ring" if ring else " crop" if crop else " margin" if margin else ""}: locked 300 unique night images, parent prefix 100, '
               f'{len(set(d300)&set(slots))} shared D slots.',flush=True)
         with tempfile.TemporaryDirectory(dir=scratch,prefix='expand-') as td:
             box=Path(td)
@@ -530,6 +557,7 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
             if crop:
                 build=night_crop.CropBatches(plan,set(d_payload),{row['key']:row['group_id'] for row in selected})
             setup=None
+            model_setup=None
             if ring:
                 import inspect
                 from ultralytics.utils.loss import v8DetectionLoss
@@ -539,14 +567,30 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
                             {Path(f).name:sha256(Path(f)) for f in map(inspect.getfile,(TaskAlignedAssigner,v8DetectionLoss))})
                 ring_tracker=RingTraining()
                 setup=ring_tracker.setup
+            if pairloss:
+                import inspect
+                from night_pairloss import PairLoss
+                from ultralytics.utils import nms
+
+                groups={r['key']:r['group_id'] for r in selected}
+                history_rows=[(n[0],groups[n[0]]) for _,n in plan]
+                ranking=[]
+
+                def model_setup(model,criterion):
+                    head=model.model[-1]
+                    check_equal('native head, NMS and loss match the passing probe',pairloss['native_code_sha256'],
+                                {Path(f).name:sha256(Path(f)) for f in map(inspect.getfile,(type(head),nms,type(criterion)))})
+                    hook=PairLoss(head,history_rows)
+                    hook.attach(criterion)
+                    ranking.append(hook)
             with train.telemetry() as monitor:
-                if objective is None and build is None and setup is None:
+                if objective is None and build is None and setup is None and model_setup is None:
                     weight,record=train._fit(torch,cv2,d_payload|n_payload,plan,seed,old,phase,200,until)
                 else:
                     from night_focus import fit_native
                     weight,record=fit_native(torch,cv2,{'day':d_payload,'night':n_payload},plan,seed,old,
                                                {'updates':200},until,phase,classification_bce=objective,batch_builder=build,
-                                               criterion_setup=setup)
+                                               criterion_setup=setup,model_criterion_setup=model_setup)
             if objective is not None:
                 signal=objective.summary()
                 check_margin_signal(signal)
@@ -557,6 +601,11 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
             if ring:
                 record['ring_signal']=ring_tracker.summary()
                 check_ring_signal(record['ring_signal'])
+            if pairloss:
+                check_equal('one fresh ranking queue',1,len(ranking))
+                record['pairloss_signal']=ranking[0].summary()
+                check_pairloss_signal(record['pairloss_signal'])
+                del ranking
             check_equal('exact actual expanded schedule and exposure',
                         (canonical_hash(plan),{k:1 for k in daykeys},dict(Counter(n[0] for _,n in plan))),
                         (record['augment_schedule_sha256'],record['counts']['source'],record['counts']['night']))
@@ -572,6 +621,7 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
             if margin: compare_margin(result,spec,digest,random_parent,night_approved,candidate[2:],policy)
             if crop: compare_margin(result,spec,digest,random_parent,night_approved,candidate[2:],policy,variant='crop')
             if ring: compare_ring(result,spec,digest,random_parent,night_approved,candidate[2:],policy,ref)
+            if pairloss: compare_ring(result,spec,digest,random_parent,night_approved,candidate[2:],policy,ref,variant='pairloss')
             write_json(out/'comparison.json',result)
             complete=True
             print(f'{arm.upper()}300: night {assessment["classes_met"]}/5; day={assessment["day_protection"]["met"]}; '
@@ -586,6 +636,7 @@ def run(arm,digest,scratch,out,d_path=None,d_digest=None,*,mix_sha=None,represen
                                     **({'margin':margin} if margin else {}),
                                     **({'crop':crop} if crop else {}),
                                     **({'ring':ring} if ring else {}),
+                                    **({'pairloss':pairloss} if pairloss else {}),
                                    'd300_parent':None if d_path is None else {'run':d_path.name,'sha256':d_digest},
                                    'versions':versions,'initial_gpu':gpu,'python':sys.version,'cloud_used':False,
                                    'final_test_executed':False,'source_train':tr['manifest'],'source_dev':dev['manifest'],'night_dev':night['manifest']})
@@ -606,7 +657,15 @@ def verify(folder,digest=None):
     arm=s['arm']; seed=s['seed']; sd=str(seed)
     proto,identity,pool,inv,d100,d300,baseplan,prior=context(cfg,pair,old,arm)
     choice=adapt._json(folder,seal,'selection.json')
-    mix=s.get('e2_mix'); margin=s.get('margin'); crop=s.get('crop'); ring=s.get('ring'); reps=100
+    mix=s.get('e2_mix'); margin=s.get('margin'); crop=s.get('crop'); ring=s.get('ring'); pairloss=s.get('pairloss'); reps=100
+    if pairloss:
+        spec=pairloss_configuration(pairloss['sha256'],s['config_sha256'])
+        check_equal('sealed isolated paired-rank provenance',
+                    (spec,'e2',None,None,None,None,spec['code_sha256'],spec['matcher_sha256']),
+                    (pairloss,arm,mix,margin,crop,ring,seal['files']['code/night_pairloss.py']['sha256'],
+                     seal['files']['code/detection_metrics.py']['sha256']))
+        _,_,parent_choice=margin_reference(spec,s['config_sha256'],s['d300_parent'])
+        check_equal('exact same verified balanced ranking inputs',parent_choice,choice)
     if margin:
         _, margin_spec=margin_configuration(margin['sha256'],s['config_sha256'])
         check_equal('sealed margin protocol and condition', (margin_spec, 'e2', None, margin_spec['balanced_manifest_sha256']),
@@ -660,6 +719,9 @@ def verify(folder,digest=None):
     if ring:
         check_ring_signal(t['ring_signal'])
         check_equal('sealed training used passed preflight schedule', ring['plan_sha256'], canonical_hash(plan))
+    if pairloss:
+        check_pairloss_signal(t['pairloss_signal'])
+        check_equal('sealed ranking used passed preflight schedule',pairloss['plan_sha256'],canonical_hash(plan))
     check_equal('verified 300 authorized input schedules and actual consumption',
                 (slots,canonical_hash([inv[k] for k in slots]),[d[0] for d,_ in plan],canonical_hash(plan),canonical_hash(plan),
                  [[d[0],n[0]] for d,n in plan],dict(Counter(n[0] for _,n in plan)),200,0,seal['files'][f'{sd}/last.pt']['sha256']),
@@ -703,11 +765,14 @@ def verify(folder,digest=None):
     if ring:
         compare_ring(recomputed,ring_spec,s['config_sha256'],s['d300_parent'],approved['night_dev'],
                      (rows['night'],results['night']['workpoints']),policy,ref)
+    if pairloss:
+        compare_ring(recomputed,spec,s['config_sha256'],s['d300_parent'],approved['night_dev'],
+                     (rows['night'],results['night']['workpoints']),policy,ref,variant='pairloss')
     check_equal('complete paired comparison independently recomputed',recomputed,adapt._json(folder,seal,'comparison.json'))
     return {'arm':arm,'seed':seed,'files_verified':len(seal['files']),'manifest_sha256':sha256(folder/'manifest.json'),
             'night_counts':{n:[p['tp'],p['fp']] for n,p in results['night']['workpoints'].items()},'comparison':recomputed,
             'seconds':s['seconds'], **({'e2_mix':mix} if mix else {}), **({'margin':margin} if margin else {}),
-            **({'crop':crop} if crop else {}), **({'ring':ring} if ring else {})}
+            **({'crop':crop} if crop else {}), **({'ring':ring} if ring else {}), **({'pairloss':pairloss} if pairloss else {})}
 
 
 def checked_output(path,*,existing=False):
@@ -767,23 +832,24 @@ def main():
     p.add_argument('--margin-sha256')
     p.add_argument('--crop-sha256')
     p.add_argument('--ring-sha256')
+    p.add_argument('--pairloss-sha256')
     p.add_argument('--diverse-run',type=Path); p.add_argument('--representative-run',type=Path)
     a=p.parse_args()
     if a.mode=='mix-pair':
-        if not (a.diverse_run and a.representative_run) or any((a.output,a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256,a.mix_sha256,a.representatives,a.margin_sha256,a.crop_sha256,a.ring_sha256)):
+        if not (a.diverse_run and a.representative_run) or any((a.output,a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256,a.mix_sha256,a.representatives,a.margin_sha256,a.crop_sha256,a.ring_sha256,a.pairloss_sha256)):
             p.error('mix-pair requires only --diverse-run and --representative-run')
         print(json.dumps(mix_pair(checked_output(a.diverse_run,existing=True),checked_output(a.representative_run,existing=True)),allow_nan=False))
         return
     if a.diverse_run or a.representative_run: p.error('contrast runs are only for mix-pair')
     if a.mode=='verify':
-        if not a.output or any((a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256,a.mix_sha256,a.representatives,a.margin_sha256,a.crop_sha256,a.ring_sha256)): p.error('verify accepts only --output')
+        if not a.output or any((a.arm,a.scratch,a.config_sha256,a.d300,a.d300_sha256,a.mix_sha256,a.representatives,a.margin_sha256,a.crop_sha256,a.ring_sha256,a.pairloss_sha256)): p.error('verify accepts only --output')
         print(json.dumps(verify(checked_output(a.output,existing=True)),allow_nan=False))
         return
     if not (a.config_sha256 and a.scratch): p.error('expected config digest and external scratch')
     scratch=a.scratch.absolute(); _no_reparse(scratch)
     if not scratch.is_dir() or scratch.resolve()!=scratch or scratch.is_relative_to(ROOT): p.error('invalid external scratch')
     if a.mode=='mix-check':
-        if not a.mix_sha256 or any((a.arm,a.output,a.d300,a.d300_sha256,a.representatives,a.margin_sha256,a.crop_sha256,a.ring_sha256)): p.error('expected exact expansion and mix protocols, no output')
+        if not a.mix_sha256 or any((a.arm,a.output,a.d300,a.d300_sha256,a.representatives,a.margin_sha256,a.crop_sha256,a.ring_sha256,a.pairloss_sha256)): p.error('expected exact expansion and mix protocols, no output')
         _,cfg,pair,old=configuration(a.config_sha256); _,spec=mix_configuration(a.mix_sha256,a.config_sha256)
         _,_,pool,inv,d100,d300,plan,parent=context(cfg,pair,old,'e2')
         arms,_=mix_selections(spec,a.config_sha256,cfg['seed'],pair,pool,inv,d100,d300,parent,plan,old,scratch)
@@ -793,14 +859,15 @@ def main():
     if not (a.arm and a.output): p.error('run requires arm and output')
     if bool(a.mix_sha256)!=bool(a.representatives) or (a.mix_sha256 and a.arm!='e2'):
         p.error('mix training requires matching E2 mixture digest and one new quota')
-    treatments=sum(bool(v) for v in (a.margin_sha256,a.crop_sha256,a.ring_sha256))
+    treatments=sum(bool(v) for v in (a.margin_sha256,a.crop_sha256,a.ring_sha256,a.pairloss_sha256))
     if treatments and (a.arm!='e2' or a.mix_sha256 or treatments!=1):
         p.error('expected only one isolated E2 treatment')
     if (a.arm=='d' and (a.d300 or a.d300_sha256)) or (a.arm!='d' and not(a.d300 and a.d300_sha256)):
         p.error('E1/E2 require the completed random D300 receipt; random does not accept a parent')
     run(a.arm,a.config_sha256,scratch,checked_output(a.output),
         None if not a.d300 else checked_output(a.d300,existing=True),a.d300_sha256,
-          mix_sha=a.mix_sha256,representatives=a.representatives,margin_sha=a.margin_sha256,crop_sha=a.crop_sha256,ring_sha=a.ring_sha256)
+          mix_sha=a.mix_sha256,representatives=a.representatives,margin_sha=a.margin_sha256,crop_sha=a.crop_sha256,
+          ring_sha=a.ring_sha256,pairloss_sha=a.pairloss_sha256)
 
 
 if __name__=='__main__':
