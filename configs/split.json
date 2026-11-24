@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "joint_sha256": "5b18adba9ed004fb071af6d5be1e560bd259676eebadd85b057773b6388601e8",
+  "control_manifest_sha256": "8deefc5a69a6b36c4023c8f2035833a1b93a18ff0d9ac17aaedde0ea7e2dc364",
+  "arms": {
+    "loc": {"localization": 1.5, "quality": 0, "negative": 0, "per_bucket": 8},
+    "negative": {"localization": 1, "quality": 0, "negative": 0.1, "per_bucket": 8}
+  }
+}

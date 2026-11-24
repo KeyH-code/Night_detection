@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import torch
 import torch.nn.functional as F
@@ -41,3 +42,49 @@ def test_confidence_quality_uses_aligned_iou_and_chooses_disjoint_hard_negatives
     assert dq is None
     assert dz[1, 0, 3] < 0 and dz[1, 1, 3] > 0 and dz[1, 2:5, 3].gt(0).all()
     assert not dz[0].any() and not dz[1, :, :3].any()
+
+
+def test_location_only_never_replaces_assignment_or_classification():
+    from night_joint import JointLoss
+    from ultralytics.utils.loss import BboxLoss
+
+    anchor = torch.tensor([[8., 8.]])
+    dist = torch.zeros((2, 1, 64))
+    box = torch.tensor([[[5., 5., 9., 9.]], [[5., 5., 9., 9.]]])
+    gt = torch.tensor([[[5., 5., 10., 9.]], [[5., 5., 10., 9.]]])
+    target = torch.zeros(2, 1, 6)
+    target[1, 0, 3] = 1.
+    mask = torch.tensor([[False], [True]])
+    params = (dist, box, anchor, gt, target, target.sum(), mask, torch.tensor([64., 64.]), torch.ones(1, 1))
+    original = BboxLoss(16)
+    assigned, bce = object(), torch.nn.BCEWithLogitsLoss(reduction='none')
+    loss = SimpleNamespace(assigner=assigned, bce=bce, bbox_loss=original)
+    objective = JointLoss(1.5, 0, 0, 8)
+    objective.attach(loss)
+    assert loss.assigner is assigned and loss.bce is bce
+    a = original(*params)
+    b = loss.bbox_loss(*params)
+    torch.testing.assert_close(torch.stack(b), torch.stack(a) * 1.5)
+    assert objective.summary()['positive_anchors'] == [1, 0]
+    assert objective.summary()['negative_buckets'] == [[0, 0, 0], [0, 0, 0]]
+
+
+def test_negative_only_preserves_regression_and_skips_positive_quality():
+    from night_joint import JointLoss
+
+    bbox = object()
+    native = torch.nn.BCEWithLogitsLoss(reduction='none')
+    loss = SimpleNamespace(assigner=object(), bce=native, bbox_loss=bbox)
+    objective = JointLoss(1, 0, .1, 1)
+    objective.attach(loss)
+    assert loss.bbox_loss is bbox
+    z = torch.zeros((2, 3, 6), requires_grad=True)
+    q = torch.zeros_like(z)
+    q[1, 0, 3] = .75
+    same = torch.zeros(3, 2)
+    other = torch.tensor([[0, 0], [.8, .2], [.15, .25]])
+    terms, _, counts = objective.class_terms(z, q, None, same, other)
+    assert terms[0, 0] == 0
+    assert counts[0].tolist() == [1, 1, 0]
+    grad, = torch.autograd.grad(terms.sum(), z)
+    assert not grad[0].any() and not grad[1, :, :3].any() and grad[1, 0, 3] == 0

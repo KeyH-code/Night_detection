@@ -237,3 +237,10 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/night_joint.py run --config-sha256 '<joint.json SHA-256>' --scratch D:/Temp
 .venv-train/Scripts/python.exe -B scripts/night_joint.py verify --config-sha256 '<joint.json SHA-256>' --manifest-sha256 '<hard_002 SHA-256>'
 ```
+
+[`split.json`](split.json) 复用 `hard_002/control`，依次训练 `loc`、`negative` 两臂。`verify-split` 只读完整开发证据，重算与同名单原损失的对比及两层白天保护。无须重跑百图排序或历史控制。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_joint.py split --config-sha256 '<split.json SHA-256>' --scratch D:/Temp
+.venv-train/Scripts/python.exe -B scripts/night_joint.py verify-split --config-sha256 '<split.json SHA-256>' --manifest-sha256 '<hard_003 SHA-256>'
+```
