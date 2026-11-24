@@ -234,6 +234,8 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `scripts/night_tal.py` 执行和核验 [TAL 正样本分配预检](specs/s7/plan.md#尾类正样本分配)；`runs/tal_<编号>/` 留该次训练侧统计、抽样／环境身份和代码快照，不保留样本或预测。`tests/train/test_night_tal.py` 保护作用范围以及否决门槛。
 
+`runs/tal_002/` 是 [有轨车辆候选边界](specs/s7/plan.md#有轨车辆候选边界)的观测证据，同类目录只留逐曝光摘要与清单，不留临时观测脚本或候选张量。
+
 `runs/contour_<编号>/` 留 [训练内轮廓筛查](specs/s7/plan.md#局部轮廓的训练内筛查)的支持、工作点和归档身份，不保存暂存图、裁图、原标签、特征或未入围权重。
 
 `runs/quality_<编号>/` 留 [定位不确定性](specs/s7/plan.md#定位不确定性筛查)的训练内折支持、度量和身份，不保存密集张量、一次性程序或未入围权重。
