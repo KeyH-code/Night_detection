@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "hard_sha256": "2799d28ecf617f844e610bc14caaec5c1a0689ccc91301cb8e966bab443fcac7",
+  "selection_sha256": "1fc24af99d2eabdd78a8bb8136ab72d618e5c6c77db0125f40c25aeace8ac58b",
+  "support_sha256": "54765d2c6b51978726cb743e86dee1e3f108d0638e4e6ec2b86ba616cf204298",
+  "pair_sha256": "7ecab00157b3e265097a8502e41254c3e00010459e9d79584001ac9bb11e901e",
+  "seed": 43,
+  "updates": 200,
+  "max_minutes": 60,
+  "loss": {"localization": 1.5, "quality": 0.5, "negative": 0.1, "per_bucket": 8}
+}

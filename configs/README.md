@@ -230,3 +230,10 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/night_hard.py support --config-sha256 '<hard.json SHA-256>' --selection-sha256 '<pool_007 SHA-256>' --scratch D:/Temp
 .venv-train/Scripts/python.exe -B scripts/night_hard.py verify --config-sha256 '<hard.json SHA-256>' --selection-sha256 '<pool_007 SHA-256>' --support-sha256 '<hard_001 SHA-256>' --scratch D:/Temp
 ```
+
+[`joint.json`](joint.json) 将这两份封存绑定到同名单训练：先原损失控制，再联合损失，两臂从 A 独立重启，结束后用 `verify` 从封存的昼夜对象重算效果而不重训或推理。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_joint.py run --config-sha256 '<joint.json SHA-256>' --scratch D:/Temp
+.venv-train/Scripts/python.exe -B scripts/night_joint.py verify --config-sha256 '<joint.json SHA-256>' --manifest-sha256 '<hard_002 SHA-256>'
+```
