@@ -214,6 +214,10 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `scripts/night_consensus.py` 是 [S7 尾类固定框复核](specs/s7/plan.md#尾类跨视图复核)入口，回归归 `tests/train/diagnose/test_night_consensus.py`。`runs/consensus_<编号>/` 保存同口径两域指标、配对、运行身份和封存；新视图保存必要的车辆分数与原图坐标，亲本离线对照只引用已有对象。不重复复制原始对象、权重、图或标签；`verify` 只读开发封存，不重新推理。
 
+`runs/coverage_<编号>/` 留 [训练侧尾类支持](specs/s7/plan.md#训练侧尾类支持)的已选标签核验身份、固定风险组折的量化读数和清单，不保存图、标签正文或重复名单。
+
+`runs/contour_<编号>/` 留 [训练内轮廓筛查](specs/s7/plan.md#局部轮廓的训练内筛查)的支持、工作点和归档身份，不保存暂存图、裁图、原标签、特征或未入围权重。
+
 [`specs/s6/plan.md`](specs/s6/plan.md) 维护对照阶段状态、共同配方和 E1→E2 的衔接；[`specs/s6/e1.md`](specs/s6/e1.md) 单独维护 E1 机制对照的假设、配置、执行细节和收尾门。计划不作实验收据，结果归封存 run 及报告。
 
 `scripts/night_train.py` 是随机臂本机训练及开发评价入口，`configs/adapt.json` 锁配方和基线身份；`tests/train/test_night_train.py` 保护轮序、用途与框几何。`runs/d_<编号>/` 保存正式随机臂原始记录：各 seed 的 `inputs.json`、`train.json`、`last.pt`、`dev/` 和采样 GPU 数据；批次预检仅保存证据，不保留预检权重、图片、标签内容或缓存。`protocol.json`、`code/`、`run.json` 及 `manifest.json` 绑定状态和复查范围；代码快照非活动入口。
