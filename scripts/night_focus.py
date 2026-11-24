@@ -122,7 +122,7 @@ def fit_native(torch,cv2,payloads,plan,seed,original,cfg,until,phase,*,transform
         loss_fn.bce=objective
     payload=payloads['day'] | payloads['night']
     trace=[]; seen=[]
-    mode=('pairloss' if model_criterion_setup is not None else 'crop' if batch_builder is not None else 'joint' if criterion_setup is not None else 'margin' if classification_bce is not None
+    mode=(cfg.get('model_objective','pairloss') if model_criterion_setup is not None else 'crop' if batch_builder is not None else 'joint' if criterion_setup is not None else 'margin' if classification_bce is not None
           else 'paste' if batch_transform is not None else 'target'
           if target_only else 'long' if rates is not None else 'focus' if focused else 'style')
     for step in range(count):

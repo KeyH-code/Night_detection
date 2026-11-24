@@ -236,6 +236,8 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `runs/tram_flow/` 留 [有轨车辆候选流失](specs/s7/plan.md#有轨车辆候选流失)的两臂逐真值训练侧候选阶段摘要、匹配计数与身份，不留原图、密集输出或临时程序。
 
+`scripts/night_floor.py` 是 [有轨车辆正分保底](specs/s7/plan.md#有轨车辆正分保底)的损失与训练侧 `probe` / `verify` 入口；`runs/floor_<编号>/` 留汇总、身份及执行代码快照。正式对照复用 `scripts/night_expand.py run --floor-sha256` 与 `expand_` 封存，`coverage.json` 附同名单训练侧逐层匿名覆盖。`tests/train/test_night_floor.py` 保护索引、同锚贴合、梯度与覆盖门槛。
+
 `scripts/night_pairloss.py` 实现 [尾类跨图分差](specs/s7/plan.md#尾类跨图分差)并提供训练侧 `probe` / `verify`。`runs/pairloss_<编号>/` 仅留预检汇总、隔离收据、代码快照及清单；内存队列不落盘。正式训练复用 `scripts/night_expand.py run --pairloss-sha256` 及 `expand_` 封存。`tests/train/test_night_pairloss.py` 保护匹配索引、异组配对、梯度隔离及队列生命周期。
 
 `scripts/night_tal.py` 执行和核验 [TAL 正样本分配预检](specs/s7/plan.md#尾类正样本分配)；`runs/tal_<编号>/` 留该次训练侧统计、抽样／环境身份和代码快照，不保留样本或预测。`tests/train/test_night_tal.py` 保护作用范围以及否决门槛。
