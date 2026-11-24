@@ -242,6 +242,8 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `scripts/night_frontier.py` 是 [卡车预算边界排序](specs/s7/plan.md#卡车预算边界排序)的训练侧 `probe` / `verify-probe` 入口；`runs/frontier_<编号>/` 留原训练点、配对与梯度摘要、执行代码和身份，不留特征或内存队列。`tests/train/test_night_frontier.py` 保护配对范围、两端梯度和平移不变性。
 
+`runs/frontier_diag/` 留 [卡车配对支持分解](specs/s7/plan.md#卡车配对支持分解)的匿名候选与逐层配对摘要，不留原图或特征。
+
 `scripts/night_truck.py` 是 [卡车独立分数迁移](specs/s7/plan.md#卡车独立分数迁移)的同锚校正与预检入口。`runs/truck_<编号>/` 留支持、身份和代码快照；正式对照复用 `scripts/night_expand.py run --truck-sha256` 与 `expand_` 封存。`tests/train/test_night_truck.py` 保护作用范围、索引、支持门槛及折回隔离。
 
 `scripts/night_floor.py` 是 [有轨车辆正分保底](specs/s7/plan.md#有轨车辆正分保底)的损失与训练侧 `probe` / `verify` 入口；`runs/floor_<编号>/` 留汇总、身份及执行代码快照。正式对照复用 `scripts/night_expand.py run --floor-sha256` 与 `expand_` 封存，`coverage.json` 附同名单训练侧逐层匿名覆盖。`tests/train/test_night_floor.py` 保护索引、同锚贴合、梯度与覆盖门槛。
