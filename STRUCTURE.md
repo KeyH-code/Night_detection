@@ -218,6 +218,8 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `runs/contour_<编号>/` 留 [训练内轮廓筛查](specs/s7/plan.md#局部轮廓的训练内筛查)的支持、工作点和归档身份，不保存暂存图、裁图、原标签、特征或未入围权重。
 
+`runs/quality_<编号>/` 留 [定位不确定性](specs/s7/plan.md#定位不确定性筛查)的训练内折支持、度量和身份，不保存密集张量、一次性程序或未入围权重。
+
 [`configs/margin.json`](configs/margin.json) 锁 [S7 原生车型分差](specs/s7/plan.md#原生车型分差)的亲本和强度；`scripts/night_margin.py` 提供只触及夜间车辆分配正例的训练损失，回归归 `tests/train/test_night_margin.py`。复用 `night_expand.py` 与新 `runs/expand_<编号>/`，额外的 `margin.json`、实际信号和同名单配对绑定本次处理；原平衡臂不回写。
 
 [`specs/s6/plan.md`](specs/s6/plan.md) 维护对照阶段状态、共同配方和 E1→E2 的衔接；[`specs/s6/e1.md`](specs/s6/e1.md) 单独维护 E1 机制对照的假设、配置、执行细节和收尾门。计划不作实验收据，结果归封存 run 及报告。
