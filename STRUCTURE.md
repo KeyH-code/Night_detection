@@ -278,6 +278,8 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 [仅图补样](specs/s7/supplement.md)的 `runs/reserve_001/` 先锁候选资格和独立复核组；`runs/pool_008/` 留冻结 A 的盲分、参照身份和配额匹配的两份名单；`runs/supp_001/` 留锁单后按唯一图核验的标签读取收据、材料产出和决定。不保存重复图片或标签内容。
 
+`scripts/night_supplement.py` 是仅图补样入口：独立工作器读取许可原图，`verify` 可由盲分复算两臂名单。开标后的材料检查单独使用 `scripts/night_material.py`，可从封存候选匹配证据复算结果，无需再次开标签。
+
 `scripts/night_truck.py` 是 [卡车独立分数迁移](specs/s7/plan.md#卡车独立分数迁移)的同锚校正与预检入口。`runs/truck_<编号>/` 留支持、身份和代码快照；正式对照复用 `scripts/night_expand.py run --truck-sha256` 与 `expand_` 封存。`tests/train/test_night_truck.py` 保护作用范围、索引、支持门槛及折回隔离。
 
 `scripts/night_floor.py` 是 [有轨车辆正分保底](specs/s7/plan.md#有轨车辆正分保底)的损失与训练侧 `probe` / `verify` 入口；`runs/floor_<编号>/` 留汇总、身份及执行代码快照。正式对照复用 `scripts/night_expand.py run --floor-sha256` 与 `expand_` 封存，`coverage.json` 附同名单训练侧逐层匿名覆盖。`tests/train/test_night_floor.py` 保护索引、同锚贴合、梯度与覆盖门槛。
