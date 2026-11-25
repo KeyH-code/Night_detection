@@ -274,6 +274,8 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `runs/tram_002/` 留 [有轨保留错类支持](specs/s7/plan.md#有轨保留错类支持)的匿名保留误报及重叠摘要、五折两侧材料门和父封存；不存图片、标签正文、原坐标或临时程序。
 
+`runs/tram_003/` 留 [定位与背景边界支持](specs/s7/plan.md#有轨定位与背景边界支持)的锁定事件、匿名类型与组支持、只读复算和父封存；不复制原预测或脚本。
+
 `scripts/night_truck.py` 是 [卡车独立分数迁移](specs/s7/plan.md#卡车独立分数迁移)的同锚校正与预检入口。`runs/truck_<编号>/` 留支持、身份和代码快照；正式对照复用 `scripts/night_expand.py run --truck-sha256` 与 `expand_` 封存。`tests/train/test_night_truck.py` 保护作用范围、索引、支持门槛及折回隔离。
 
 `scripts/night_floor.py` 是 [有轨车辆正分保底](specs/s7/plan.md#有轨车辆正分保底)的损失与训练侧 `probe` / `verify` 入口；`runs/floor_<编号>/` 留汇总、身份及执行代码快照。正式对照复用 `scripts/night_expand.py run --floor-sha256` 与 `expand_` 封存，`coverage.json` 附同名单训练侧逐层匿名覆盖。`tests/train/test_night_floor.py` 保护索引、同锚贴合、梯度与覆盖门槛。
