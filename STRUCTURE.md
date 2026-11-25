@@ -264,6 +264,8 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `runs/block_<编号>/` 留 [预算阻挡分解](specs/s7/plan.md#尾类预算阻挡分解)的固定事件、匿名误报类型与组、原命中和可达预算见证；源框、图、预测及权重只引用父封存。
 
+`runs/block_002/` 留 [预算边界负例](specs/s7/plan.md#尾类预算边界负例)的只读材料门：各折训练侧锁定的阈值、两侧匿名支持身份、父封存与否决／通过结论；不复制原候选、图、标签或特征。
+
 `scripts/night_truck.py` 是 [卡车独立分数迁移](specs/s7/plan.md#卡车独立分数迁移)的同锚校正与预检入口。`runs/truck_<编号>/` 留支持、身份和代码快照；正式对照复用 `scripts/night_expand.py run --truck-sha256` 与 `expand_` 封存。`tests/train/test_night_truck.py` 保护作用范围、索引、支持门槛及折回隔离。
 
 `scripts/night_floor.py` 是 [有轨车辆正分保底](specs/s7/plan.md#有轨车辆正分保底)的损失与训练侧 `probe` / `verify` 入口；`runs/floor_<编号>/` 留汇总、身份及执行代码快照。正式对照复用 `scripts/night_expand.py run --floor-sha256` 与 `expand_` 封存，`coverage.json` 附同名单训练侧逐层匿名覆盖。`tests/train/test_night_floor.py` 保护索引、同锚贴合、梯度与覆盖门槛。
