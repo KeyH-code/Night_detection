@@ -260,6 +260,8 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `runs/roi_004/` 留 [残差只降分](specs/s7/plan.md#尾类组外残差只降分)的逐图命中、固定折摘要、减分审计与父封存；不复制原预测、组外分、特征或一次性脚本。
 
+`runs/roi_005/` 留 [高分误报判别](specs/s7/plan.md#尾类高分误报判别)的折与拟合边界身份、匿名风险分、逐图命中及父封存；不留 ROI 描述、模型副本或临时程序。
+
 `scripts/night_truck.py` 是 [卡车独立分数迁移](specs/s7/plan.md#卡车独立分数迁移)的同锚校正与预检入口。`runs/truck_<编号>/` 留支持、身份和代码快照；正式对照复用 `scripts/night_expand.py run --truck-sha256` 与 `expand_` 封存。`tests/train/test_night_truck.py` 保护作用范围、索引、支持门槛及折回隔离。
 
 `scripts/night_floor.py` 是 [有轨车辆正分保底](specs/s7/plan.md#有轨车辆正分保底)的损失与训练侧 `probe` / `verify` 入口；`runs/floor_<编号>/` 留汇总、身份及执行代码快照。正式对照复用 `scripts/night_expand.py run --floor-sha256` 与 `expand_` 封存，`coverage.json` 附同名单训练侧逐层匿名覆盖。`tests/train/test_night_floor.py` 保护索引、同锚贴合、梯度与覆盖门槛。
