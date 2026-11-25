@@ -256,6 +256,8 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `runs/roi_002/` 是 [框内分数蒸馏](specs/s7/plan.md#尾类框内分数蒸馏)的原排程无更新子型，只留对齐身份、匿名监督与实际梯度摘要；不复制原组外读出或其候选池，不存特征或临时程序。
 
+`runs/roi_003/` 留 [组外反转支持](specs/s7/plan.md#尾类组外反转支持)的匿名真实纠正边、折统计及父封存；只引用原候选和组外分数，不复制其内容或保存临时脚本。
+
 `scripts/night_truck.py` 是 [卡车独立分数迁移](specs/s7/plan.md#卡车独立分数迁移)的同锚校正与预检入口。`runs/truck_<编号>/` 留支持、身份和代码快照；正式对照复用 `scripts/night_expand.py run --truck-sha256` 与 `expand_` 封存。`tests/train/test_night_truck.py` 保护作用范围、索引、支持门槛及折回隔离。
 
 `scripts/night_floor.py` 是 [有轨车辆正分保底](specs/s7/plan.md#有轨车辆正分保底)的损失与训练侧 `probe` / `verify` 入口；`runs/floor_<编号>/` 留汇总、身份及执行代码快照。正式对照复用 `scripts/night_expand.py run --floor-sha256` 与 `expand_` 封存，`coverage.json` 附同名单训练侧逐层匿名覆盖。`tests/train/test_night_floor.py` 保护索引、同锚贴合、梯度与覆盖门槛。
