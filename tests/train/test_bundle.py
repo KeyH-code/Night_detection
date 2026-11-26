@@ -20,15 +20,17 @@ def test_package_uses_current_layout_and_exact_data_whitelist(tmp_path, monkeypa
         for p in (project / folder).iterdir():
             if p.is_file():
                 shutil.copyfile(p, root / folder / p.name)
-    for rel in ('RULES.md', 'specs/s3/plan.md', 'runs/a_001/train/best_dev_metrics.json',
-                'runs/a_001/train/args.yaml', 'runs/a_001_diag/dev/metrics.json', 'runs/a_001_diag/slices.csv'):
-        target = root/rel
+    (root / 'specs/s3').mkdir(parents=True)
+    for rel in ('RULES.md', 'specs/s3/plan.md'):
+        shutil.copyfile(project / rel, root / rel)
+    # Packaging verifies identity and membership. These inputs only need distinct bytes.
+    for rel in ('runs/a_001/train/best_dev_metrics.json', 'runs/a_001/train/args.yaml',
+                'runs/a_001_diag/dev/metrics.json', 'runs/a_001_diag/slices.csv',
+                'weights/yolo11m.pt', 'weights/yolo11m.provenance.json',
+                'weights/yolo26n.pt', 'weights/yolo26n.provenance.json'):
+        target = root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(project/rel, target)
-    (root / 'weights').mkdir()
-    for p in (project / 'weights').iterdir():
-        if p.is_file():
-            (root / 'weights' / p.name).write_bytes(b'fake pretrained fixture')
+        target.write_bytes(rel.encode('utf-8'))
     data = root / 'data/source_v1'
     records = ['READY.json', 'categories.json', 'protocol.json', 'manifests/train.json',
                'manifests/dev.json', 'images/source_train/a.jpg', 'labels/source_train/a.txt']
@@ -41,6 +43,10 @@ def test_package_uses_current_layout_and_exact_data_whitelist(tmp_path, monkeypa
     contract = {'ready': ready, 'files': ready['files']}
     monkeypatch.setattr(bundle, 'ROOT', root)
     monkeypatch.setattr(bundle, 'verify_source', lambda *_: contract)
+    if config_name == 'source_s3.yaml':
+        # The production config resolver verifies the original A recipe. This test checks archive membership.
+        import train_source
+        monkeypatch.setattr(train_source, 'config_at', lambda path: {'fixture_config': path.name})
     monkeypatch.chdir(root)
     output = tmp_path / 'package.tar.gz'
     bundle.build(data, sha256(data / 'READY.json'), output, config_path=Path('configs')/config_name)

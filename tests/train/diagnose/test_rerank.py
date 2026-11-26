@@ -89,6 +89,9 @@ def test_train_and_evaluate_cli_on_synthetic_images(tmp_path, monkeypatch):
     runs.mkdir()
     monkeypatch.setattr(rr, 'RUNS', runs)
     monkeypatch.setattr(rr, 'SOURCE', tmp_path)
+    exclusions = tmp_path / 'exclusions.json'
+    rr.write_json(exclusions, {'purpose': 'source_train', 'candidates': []})
+    monkeypatch.setattr(rr, 'EXCLUSIONS', exclusions)
     # Fit uses positives and negatives; the internal image has positives only
     # so the synthetic fit can reliably produce a feasible validation threshold.
     train_pool = pool([row('a', 'same', 'source_train'), row('b', 'same', 'source_train'),

@@ -74,9 +74,9 @@
 
 ```powershell
 # 首先只读核验包、活动输入、账号、实例和余额。
-python -B scripts/gpu_queue.py --bundle D:\Temp\night-scale24-p25y06e7\scale24.tar
+python -B scripts/gpu_queue.py --bundle "<已核验训练包的绝对路径>"
 # 提交一次平台排队，并在同一进程内负责后续训练和收尾。
-python -B scripts/gpu_queue.py --bundle D:\Temp\night-scale24-p25y06e7\scale24.tar --run
+python -B scripts/gpu_queue.py --bundle "<已核验训练包的绝对路径>" --run
 ```
 
 默认从提交起总计 300 分钟，等待也计入窗口，不从获得 GPU 时重新计时。按用户给定的 1.63 元/小时估算上限 8.15 元，并核对可用现金和本次 8.60 元预算；不代表账单已核验。自动关机截止时间在提交后设置到平台，并在 `Running` 时回读。等待过久会挤占训练时间，时间不足时保留完整轮 checkpoint，后续是否续训需另作安排。

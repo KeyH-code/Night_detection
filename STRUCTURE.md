@@ -4,7 +4,7 @@
 
 | 位置 | 用途 | 允许内容 | 命名 |
 |---|---|---|---|
-| 根目录 | 项目入口 | README.md、AGENTS.md、STRUCTURE.md、RULES.md、GPU.md、plan.md、Git规则 | 固定短名 |
+| 根目录 | 项目入口 | README.md、AGENTS.md、STRUCTURE.md、RULES.md、GPU.md、plan.md、LICENSE、Git规则 | 固定短名 |
 | specs/ | 阶段文档 | 每个计划阶段单独建子目录；根目录不散放阶段文件 | 小写阶段ID，如s0/、s2/、s10/；与根plan阶段表对应 |
 | specs/s0/、specs/s1/ | 已完成阶段索引 | review.md链接已有数据/首训证据，注明事后整理 | 固定短名review.md；不补造同期plan或复制原始记录 |
 | specs/s2/—specs/s10/ | 各阶段开发安排 | plan.md；有独立用途时增加roadmap.md、changemap.md等，职责见下表 | 固定短名；阶段进度看[根计划](plan.md#阶段)，不机械创建空文档 |
@@ -15,6 +15,7 @@
 | tests/train/diagnose/ | 本机诊断和复核器回归 | 原生匹配/导出、工作点、尺寸、风险组区间、审核及固定 R 复核器的裁剪、分组和选轮 | test_<功能>.py；完整 pytest 递归覆盖，训练包顶层 glob 不带入本机回归 |
 | configs/ | 配置 | 类别映射、实验参数、README.md参数说明；`gpu.local.json` 是本机实例、账号和 SSH 绑定，不入 Git 或训练包 | 按功能/实验命名；JSON/YAML；本机绑定用 `.local.json` |
 | environment/ | 环境 | 数据依赖、平台锁、安装入口 | 按平台/用途；旧有效锁名保留 |
+| examples/ | 快速运行输入 | 许可清楚、带来源说明的单图，如 城市公交 | <场景>.jpg |
 | data/soda10m/ | 数据 | 下表限定内容 | 数据集/版本/用途分层 |
 | runs/a_001/ | 首训A基线 | 一份原始训练记录、代码/配置/环境快照、权重及清单；不等于最终A已冻结 | 实验名_序号；如 a_001 |
 | runs/a_001_train/ | 固定best的训练集评价 | metrics.json、comparison.csv、run.json、必要日志及评价代码快照；不复制数据/权重 | 关联实验名_用途；原训练清单不改 |
@@ -30,7 +31,8 @@
 
 | 文件 | 唯一职责 |
 |---|---|
-| README.md | 当前状态摘要、数据/权重/报告等导航 |
+| README.md | 公开入口、开发结果摘要、快速运行、数据和权重说明 |
+| LICENSE | 本项目原创代码的 MIT 许可文本，第三方归属见 README |
 | AGENTS.md | Agent行为、留存、编码及执行边界 |
 | [GPU.md](GPU.md) | GPU 使用原则与 BitaHub 开发机操作入口；长期维护，具体参数和实验安排归当前任务 |
 | STRUCTURE.md | 维护目录的职责、允许内容与命名模式 |
@@ -82,9 +84,11 @@ S0—S10各有目录。S0/S1为事后证据索引；S3 原采样配方保留在[
 
 ## 命名
 
+`scripts/demo.py` 是 CPU 单图推理示例。输入可用 `examples/bus.jpg`，输出默认进入被 Git 排除的 `artifacts/demo/`。`plots/supp_002/recall.png` 来自三臂夜间封存预测，使用 `scripts/plot.py --night-pair runs` 重建。
+
 `scripts/diagnose.py`是固定权重source_train/dev诊断入口，复用evaluate.py及source_contract.py，不调用Trainer；`scripts/detection_metrics.py`仅做离线匹配、PR/工作点、错误/切片和风险组统计。RULES门槛运行时读取，不在新配置另设一套标准。
 
-`scripts/rerank.py` 是固定 R 行人复核器的本机预检、训练和同池评估入口。`configs/rerank.json` 只保留纳入排除的训练侧疑点和审核来源。实际执行使用新 `runs/rerank_<编号>/`，如 `runs/rerank_001/`。`run.json` 记录身份、分组和逐轮验证，`best.pt`、`last.pt` 保存复核器权重，`source_dev/` 保存 `scores.jsonl.gz`、`pr.npz` 和 `metrics.json`，`manifest.json` 与 `code/` 保留产物核验和实际运行代码。原始图像与 R 预测只引用源路径，预检无持久输出。
+`scripts/rerank.py` 是固定 R 行人复核器的本机预检、训练和同池评估入口。`configs/rerank.json` 为本地人工复核配置，含训练侧疑点和审核来源。公开 Git 历史排除该文件，复算时按原实验收据提供。实际执行使用新 `runs/rerank_<编号>/`，如 `runs/rerank_001/`。`run.json` 记录身份、分组和逐轮验证，`best.pt`、`last.pt` 保存复核器权重，`source_dev/` 保存 `scores.jsonl.gz`、`pr.npz` 和 `metrics.json`，`manifest.json` 与 `code/` 保留产物核验和实际运行代码。原始图像与 R 预测只引用源路径，预检无持久输出。
 
 固定诊断按runs/<实验>_diag/组织：根目录run.json/protocol.json/manifest.json绑定身份，train/和dev/保存objects.jsonl.gz、matches.jsonl.gz、pr.npz、metrics.json及原生指标native.json；根目录workpoints.json、comparison.csv、slices.csv、intervals.json、errors.json和quality.json记录离线数值与规则缺口，trace.jsonl.gz保留必要候选链与全扫描摘要。objects用稀疏正IoU边保存原生输入坐标下的数值，保护离线匹配边界。
 

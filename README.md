@@ -1,73 +1,61 @@
-# 夜间检测
+# 夜间目标检测
 
-检验百图夜间标注能否恢复到白天源模型的大部分水平，并比较随机与一致性/多样性选样，回测白天性能保留。
+用有限的夜间标注预算适配 YOLO11m。先冻结白天源模型，再在相同训练配方下比较随机选图、跨视图不一致性选图（E1）和特征代表性与多样性选图（E2）。300 张夜训图让行人、骑行者、汽车达到夜间恢复线，卡车和有轨车辆在 340 张时仍未过线。
 
-## 状态
+[快速运行](#快速运行) · [结果复查](#结果复查) · [数据与权重](#数据与权重) · [许可](#许可)
 
-**白天源模型 A 已按五类受限冻结。** 夜间零样本基线和后续百图对照共用 [`align_001/17/last.pt`](runs/align_001/17/last.pt)。在完整 500 张白天开发图和锁定多视图协议下，行人、骑行者、汽车、卡车、有轨车辆在三个种子上通过全部 15 项类别验收。行人召回（P≥75%）分别为 63.22%、60.74%、61.57%。[冻结决定与权重身份](specs/s4/plan.md) · [逐类结果和复算命令](reports/a.md#整景尺度适配三种子五类通过) · [夜间基线与百图对照准备](specs/s5/plan.md)
+## 结果
 
-**S6 本轮收束，百图恢复目标未达成。** [随机臂 D](reports/night.md#百图随机臂)及 [E1/E2](reports/night.md#百图策略训练)均有三种子开发证据；追加的[机制对照](specs/s6/plan.md#百图恢复决策轨迹)仍未找到同时通过两域要求的配方。有轨车辆和卡车是主要缺口，见[阶段结论](reports/night.md#百图阶段结论)。最终留出未启动。[整体进度](plan.md#阶段)。S2 诊断已执行，阶段结论仍待单独复核。
+白天源模型 A 在 500 张白天开发图上通过三种子、五类验收，后续共用 seed 17 权重。适配结果使用同一批 500 张白天和 331 张夜间开发图。白天保护要求整体 AP50:95 最多回退 1 个百分点、每类最多回退 2 个百分点。夜间每类最多 6 个误报，召回达到 A 在白天相同每图误报预算下的 80% 即过线。表中的夜间过线数为开发集点估计。[白天结果](reports/a.md#整景尺度适配三种子五类通过) · [评价协议](specs/s5/plan.md#恢复目标)
 
-**S7 已完成 seed 43 的 300 张开发对照。** 先随机、再按同预算比较 E1/E2；三臂白天保护均通过，但夜间均只过 3/5。E2 卡车改善，整体选图优势是否扩大尚未确认；[结果](reports/night.md#300-张策略对照)。不作为百图达标，最终留出未启动。
+| 夜训图 | 方案 | 种子数 | 白天保护 | 夜间过线数 | 补充读数 |
+| ---: | --- | ---: | --- | --- | --- |
+| 100 | 随机 D | 3 | 3/3 通过 | 1/5、2/5、2/5 | 同预算对照 |
+| 100 | E1 | 3 | 1/3 通过 | 各 3/5 | 五类宏平均召回比 D 高 4.55 个百分点 |
+| 100 | E2 | 3 | 2/3 通过 | 各 3/5 | 五类宏平均召回比 D 高 1.44 个百分点 |
+| 300 | 随机 / E1 / 平衡 E2 | 各 1 | 三组均通过 | 各 3/5 | 夜间五类宏平均召回为 37.52% / 39.98% / 39.83% |
+| 340 | 定向补 40 / 同折随机补 40 | 各 1 | 两组均通过 | 各 3/5 | 卡车相对各自共用的 300 图控制分别少检 6 个、多检 8 个 |
 
-后续[尾类诊断](reports/night.md#误报抑制上限)发现单独处理一种误报不足以恢复卡车和有轨车辆。[车型分差训练](reports/night.md#原生车型分差)白天双层保护通过，夜间仍只有 3/5；平衡 E2 继续用作对照，不冻结为达标模型。
+300 张约占 994 张候选图的 30%，指**单个训练方案**模拟揭示的标签数量。340 图两臂沿用同一 300 图控制、同一训练配方和更新预算。定向补样增加了相关困难材料，但未覆盖多数指定缺口，两臂仍未恢复卡车和有轨车辆。百图五类联合目标未达成，最终留出未开启。[100 图](reports/night.md#百图策略训练) · [300 图](reports/night.md#300-张策略对照) · [340 图](reports/night.md#340-图配对训练)
 
-<details><summary>白天历史记录（以下为当时状态）</summary>
+![卡车和有轨车辆在不同误报预算下的正确检出数，三组结果在 6 个误报处均低于恢复线](plots/supp_002/recall.png)
 
-`alias_002` 的 seed 29 完成正式训练并关机，行人 AP50 70.10%，但召回 56.40%、汽车严格 AP 67.976%，未满足五类要求；没有继续该训练配方的 17/43。跨初始化平均和外观校准也未入围，见[别名正式对照](reports/a.md#行人别名正式对照)。
-2026-11-22 的端点平均、末轮、整图外观与行人分类行适配尚未补上 seed 29 的缺口。平均权重达到行人 AP50 70.22%，但在 Precision≥75% 时只有 285/484 人；没有据此替换 `seed_002`。见[端点对照](reports/a.md#端点平均与整图外观)与[分类先验](reports/a.md#行人先验迁移)。
+图中每点是在对应误报上限内，遍历原有预测分数阈值可以达到的最多正确检出数。正式验收取 6 FP。曲线的其余部分用于诊断取舍。
 
-本轮固定权重复核未找到可替代 `seed_002` 的方案。等召回诊断和训练侧原图盲审见[正负配对](reports/a.md#同召回下的误报与训练侧配对)；整图 960 复核对 seed 29 的工作点有局部增益，但更高召回下出现大量重复框，三种子行人 AP50 均未过线，见[整图对照](reports/a.md#整图位置复核)。本轮未启动训练。
+## 快速运行
 
-行人跨种子差距已定位到工作点排序：seed 29 相对 17 丢失的 36 人全都有贴合但低分的框。裁图、骑行者竞争降分、逐候选复看均未替代锁定方案。本机 `teacher_002` 配对训练已完成：在规定精度下教师臂比普通臂少检出 22 人，不扩大该配方。见[教师试验](reports/a.md#跨尺度教师试验)与[行人跨种子缺口](reports/a.md#行人跨种子缺口)。
-
-`seed_002` 原配方三种子复验已完成：骑行者、汽车、卡车、有轨车辆三臂均达标；行人只有 seed 29 未达标，三轮车 seed 29／43 均未达标。只有 seed 17 六类过线，A 未冻结。[完整结果](reports/a.md#原配方三种子复验) · [封存](runs/seed_002/manifest.json)
-
-最新跨种子推理 `seed_001`：在两条已有 640 短程微调权重上，锁定多视图未稳定复现六类过线。骑行者、卡车和有轨车辆两臂均达标，行人与三轮车两臂均未达标；汽车只有 seed 29 过线。这不是 `a_001` 原配方三 seed 正式复验，未冻结 A。[两臂结果](reports/a.md#多视图跨种子验证)
-
-三轮车候选 `tricycle_001` 已完成原图复现：在锁定 `scale_004` 的五类输出上，只更换三轮车的多尺度分支，白天开发集六类数值门槛全部通过。三轮车仅 22 个真值，区间证据仍不足；A 尚未冻结。详见[三轮车报告](reports/a.md#三轮车多尺度)和[封存清单](runs/tricycle_001/manifest.json)。
-
-白天多视图开发候选已锁定：保留 `a_001 best` 的原 640 非行人输出，用 960/1280 原图和镜像融合行人。行人 AP50 **71.61%**、AP50:95 **44.22%**、Precision **75.75%**、Recall **62.60%**；行人、骑行者、汽车、卡车、有轨车辆达标，**仅三轮车未达标**。这不是 A 冻结；夜间和终评未开始。见[锁定记录](specs/s3/scale.md#候选锁定)、[报告](reports/a.md#行人多视图融合)和[产物清单](runs/scale_004/manifest.json)。
-
-首次正式训练`a_001`已完成100轮，best第80轮；原source_dev行人/汽车AP50:95宏平均0.500039822187496。首训工程验收通过、best/last本地SHA通过，但A尚未完成六类质量验收或冻结。S2自动诊断与Agent主审已完成，本轮用户复验已反馈，阶段结论待单独复核，详见[阶段计划](plan.md)与[验收规则](RULES.md)。
-
-固定best的统一诊断覆盖4000张train和500张dev，规则工作点下行人Recall39.88%、三轮车31.82%，仍未过线；938项gpt-6-luna视觉主审已完成，用户本轮反馈74项判断并认可初审可采用，不确定项按需复验，不能称A冻结。S3资格选模、固定100轮及dev-only/本地最终评价已实现并通过本地回归。用户已重开云端并授权预检通过后直接运行seed17的R/S；两臂完整预检已通过，R/S均完成100轮且完整取回本地，本地完整评价与首对比较已完成，当前采样未带来dev小/细行人净收益；实际状态以[计划](plan.md)和runs记录为准。最终测试和夜间实验未启动，A仍未冻结；费用估计不等于账单核验。
-
-</details>
-
-## 入口
-
-| 内容 | 位置 |
-|---|---|
-| 结构与规则 | [STRUCTURE.md](STRUCTURE.md)、[AGENTS.md](AGENTS.md) |
-| BitaHub GPU | [开机、状态与自动收尾](GPU.md#bitahub-开发机) |
-| 实验验收与冻结 | [RULES.md](RULES.md) |
-| 计划 | [plan.md](plan.md) |
-| 阶段文档 | [当前 S6 计划](specs/s6/plan.md) · [S5 夜间验收](specs/s5/plan.md#恢复目标) · [阶段目录](specs/) |
-| 固定best诊断 | [运行身份](runs/a_001_diag/run.json)、[数值对照](runs/a_001_diag/comparison.csv)、[初审与复审队列](runs/a_001_diag/cases.jsonl)、[状态](runs/a_001_diag/review.json)；结论见[a.md诊断](reports/a.md#诊断) |
-| 数据报告 | [data.md](reports/data.md) |
-| 正式训练报告 | [a.md](reports/a.md) |
-| 4000张训练图/标签 | [images](data/soda10m/splits/source_v1/images/source_train)、[labels](data/soda10m/splits/source_v1/labels/source_train) |
-| 500张开发图/标签 | [images](data/soda10m/splits/source_v1/images/source_dev)、[labels](data/soda10m/splits/source_v1/labels/source_dev) |
-| 数据身份 | [READY.json](data/soda10m/splits/source_v1/READY.json) |
-| 冻结源模型 A | [`align_001/17/last.pt`](runs/align_001/17/last.pt) · [冻结记录](runs/align_001/17/freeze.json) · [三 seed 验收](runs/align_001/comparison.json) · [复算入口](scripts/verify_scene.py) |
-| 历史原 A 权重 | [best.pt](runs/a_001/weights/best.pt)、[last.pt](runs/a_001/weights/last.pt) |
-| 固定best的train评价 | [metrics.json](runs/a_001_train/metrics.json)、[train/dev对照](runs/a_001_train/comparison.csv)、[图](plots/a_001_train/ap.png) |
-| 逐轮指标 | [results.csv](runs/a_001/train/results.csv)、[source_metrics.jsonl](runs/a_001/train/source_metrics.jsonl) |
-| 参数与日志 | [args.yaml](runs/a_001/train/args.yaml)、[training.log](runs/a_001/job/guarded/training.log) |
-| 完成与验收 | [审计](runs/a_001/job/COMPLETION_AUDIT.json)、[验收](runs/a_001/review.md) |
-| 留存清单 | [manifest.json](runs/a_001/manifest.json) |
-| 曲线 | [loss.png](plots/a_001/loss.png)、[ap.png](plots/a_001/ap.png) |
-| 配置与环境说明 | [配置](configs/README.md)、[环境](environment/README.md) |
-
-## 检查
+以下命令在仓库根目录执行，先确认 `python --version` 为 3.12。示例使用 CPU、官方 COCO 预训练 YOLO11n 和随仓库提供的示例照片。首轮安装和下载需要网络。已有兼容环境和可信本地权重时，可直接执行最后一条命令。
 
 ```powershell
-.venv-data/Scripts/python.exe scripts/make_splits.py verify --stage source
-.venv-data/Scripts/python.exe scripts/make_splits.py verify --stage night
-.venv-data/Scripts/python.exe scripts/verify_run.py --run runs/a_001
-.venv-data/Scripts/python.exe -m unittest discover -s tests/data -v
-.venv-train/Scripts/python.exe -m pytest tests/train -q -p no:cacheprovider
+python -m venv .venv-demo
+$demoPython = '.\.venv-demo\Scripts\python.exe'
+& $demoPython -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0 torchvision==0.23.0
+& $demoPython -m pip install ultralytics==8.4.171
+New-Item -ItemType Directory -Force weights | Out-Null
+Invoke-WebRequest https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt -OutFile weights/yolo11n.pt
+if ((Get-FileHash weights/yolo11n.pt).Hash -ne '0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1') { throw 'YOLO11n SHA-256 mismatch' }
+& $demoPython -B scripts/demo.py
 ```
 
-这些检查不运行模型最终测试。Git同步代码、配置/环境锁、规划、报告及可复建图表；`.gitignore`排除数据、原始实验记录、权重、虚拟环境、缓存、日志和凭据。这些本地内容不会随clone恢复，报告中指向data/runs/weights的链接用于本地追溯；数据和权重另按许可及实验清单管理，不通过Git上传。
+输出为 `artifacts/demo/bus.png`，终端打印检出数。用 `--image`、`--weights`、`--output` 指定自己的图片、可信本地检测权重与输出位置。此入口使用单路 640 推理，类别随模型权重变化。正式昼夜结果使用锁定的多视图协议。[示例实现](scripts/demo.py) · [训练与评价环境](environment/README.md)
+
+## 结果复查
+
+- **直接阅读。** [数据划分](reports/data.md) · [白天源模型](reports/a.md) · [夜间主报告与复查索引](reports/night.md#复查) · [项目阶段](plan.md#阶段)。
+- **运行无需数据的回归。** 在测试环境执行 `python -m pip install -r environment/data.txt pytest==9.0.2`，再运行 `python -B -m pytest tests/data -q -p no:cacheprovider`。训练和诊断回归的环境与命令见 [环境说明](environment/README.md)。
+- **重算正式结果。** 先准备相应冻结划分、权重和完整封存输入，再按 [复查索引](reports/night.md#复查) 选择白天 A、300 图或 340 图验证命令。历史文档里的 `runs/` 与 `data/` 路径是本地证据索引。
+
+## 数据与权重
+
+SODA10M 由使用者从官方入口按条款获取。项目划分使用 4,000 张白天训练图、500 张白天开发图、994 张夜间候选图和 331 张夜间开发图。精确重建还需要风险分组依据、人工复核和已锁选图名单。原图、标签、模型权重及逐图实验记录均由本地维护。[SODA10M 官方下载](https://soda-2d.github.io/download.html) · [数据身份](reports/data.md#身份)
+
+项目权重另行发布，目前无公开下载入口。下表用于识别后续权重，复查时使用相应模型的冻结协议。
+
+| 模型 | 本地封存位置 | SHA-256 |
+| --- | --- | --- |
+| 白天 A | `runs/align_001/17/last.pt` | `45d212eb674aa60ef2a159652a448cf84eb897ce5a0820ade7dc591fe2afe659` |
+| 300 图平衡 E2 | `runs/expand_003/43/last.pt` | `a9544566ad8089001cda191697e624182a69eadad1610de29708dd0c3c1470ea` |
+
+## 许可
+
+本项目原创代码按 [MIT](LICENSE) 授权。Ultralytics 的代码和模型按其上游条款提供，开源分发适用 AGPL-3.0。训练和评价包含对 Ultralytics 训练器、验证器和分配器的扩展，使用及再分发集成工作流时需同时遵守对应的上游许可。SODA10M 数据及由其派生的材料适用其数据条款。示例照片由 Gaurav.raval 拍摄，取自 Wikimedia Commons 的 CC0 1.0 图像，仓库使用去除元数据的缩略版本。[Ultralytics 许可](https://www.ultralytics.com/license) · [SODA10M 条款](https://soda-2d.github.io/about.html#terms_of_use) · [示例图片来源](https://commons.wikimedia.org/wiki/File:GandhinagarCityBus.jpg)

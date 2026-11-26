@@ -237,6 +237,71 @@ def trajectory(evidence, output):
     fig.savefig(output/'trajectory.png',dpi=140);plt.close(fig)
 
 
+
+def night_pair(runs, output):
+    """Render the paired 340-image operating curves from sealed development predictions."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    import detection_metrics as metrics
+    from source_contract import check_equal, sha256, verified_file
+
+    pair = runs / 'supp_002'
+    receipt = json.loads((pair / 'manifest.json').read_text(encoding='utf-8'))
+    comparison_path = verified_file(pair, {'path': 'comparison.json', **receipt['files']['comparison.json']})
+    comparison = json.loads(comparison_path.read_text(encoding='utf-8'))
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5), layout='constrained')
+    classes = ((3, 'truck', 'Truck', 28), (4, 'tram', 'Tram', 150))
+    arms = (
+        ('control', 'expand_010', '300 control', '#334155', 'solid'),
+        ('targeted', 'expand_013', '340 targeted', '#b45309', 'dashdot'),
+        ('random', 'expand_014', '340 random', '#0369a1', 'dashed'),
+    )
+    for arm, run_name, label, color, style in arms:
+        run = runs / run_name
+        manifest = run / 'manifest.json'
+        check_equal(f'{run_name} manifest', comparison['seals'][run_name], sha256(manifest))
+        relative = '43/dev/night/objects.jsonl.gz'
+        record = json.loads(manifest.read_text(encoding='utf-8'))['files'][relative]
+        rows = metrics.read_rows(verified_file(run, {'path': relative, **record}))
+        check_equal(f'{run_name} development images', 331, len(rows))
+        for ax, (class_id, name, _, maximum) in zip(axes, classes, strict=True):
+            curve = metrics.work_curve(rows, class_id)
+            eligible = (curve['fp'] >= 0) & (curve['fp'] <= maximum)
+            feasible = np.zeros(maximum + 1, dtype=int)
+            np.maximum.at(feasible, curve['fp'][eligible], curve['tp'][eligible])
+            best = np.maximum.accumulate(feasible)
+            recorded = comparison['development'][arm]['night'][name]
+            target = recorded['target_tp']
+            crossing = np.flatnonzero(best >= target)
+            check_equal(f'{run_name}/{name} recorded TP', recorded['tp'], int(best[6]))
+            check_equal(f'{run_name}/{name} first target crossing',
+                        recorded['min_fp_to_target'], int(crossing[0]) if len(crossing) else None)
+            ax.step(range(maximum + 1), best, where='post', color=color, linestyle=style,
+                    linewidth=2, label=label)
+            ax.scatter(6, best[6], color=color, s=28, zorder=4)
+
+    for ax, (_, name, title, maximum) in zip(axes, classes, strict=True):
+        target = comparison['development']['control']['night'][name]['target_tp']
+        ax.axhline(target, color='#64748b', linestyle=':', linewidth=1.4)
+        ax.axvline(6, color='#94a3b8', linestyle=':', linewidth=1.4)
+        ax.annotate(f'Target: {target} TP', (6 + maximum * .08, target), xytext=(0, 5),
+                    textcoords='offset points', ha='left', color='#334155', fontsize=9)
+        ax.set(title=title, xlim=(0, maximum), ylim=(0, None),
+               xlabel='Maximum false positives', ylabel='Best true positives')
+        ax.grid(alpha=.18)
+        ax.spines[['top', 'right']].set_visible(False)
+    fig.suptitle('Night development set | 331 images | operating budget: 6 FP per class',
+                 fontsize=13, fontweight='bold')
+    axes[1].legend(loc='lower right', fontsize=9, frameon=False)
+    output.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output / 'recall.png', dpi=155)
+    plt.close(fig)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run', type=Path, default=Path('runs/a_001'))
@@ -245,8 +310,11 @@ if __name__ == '__main__':
     parser.add_argument('--diagnostic', type=Path, help='Retained fixed-checkpoint diagnostic evidence')
     parser.add_argument('--source-pair', type=Path, help='Retained S3 comparison.json and sampling.csv directory')
     parser.add_argument('--trajectory', type=Path, help='Offline S3 trajectory.csv directory')
+    parser.add_argument('--night-pair', type=Path, help='Local runs root with the sealed 340-image comparison')
     args = parser.parse_args()
-    if args.trajectory:
+    if args.night_pair:
+        night_pair(args.night_pair.resolve(), args.output or Path('plots/supp_002'))
+    elif args.trajectory:
         trajectory(args.trajectory.resolve(), args.output or Path('plots') / args.trajectory.name)
     elif args.source_pair:
         source_pair(args.source_pair.resolve(), args.output or Path('plots') / args.source_pair.name)

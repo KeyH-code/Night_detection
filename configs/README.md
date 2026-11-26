@@ -55,7 +55,7 @@ S3当前profile=dev_only_local_final_v1：每轮仅完整500 dev，batch1/worker
 
 ### 五类统一评价
 
-[`accept.json`](accept.json) 锁定新 [五类规则](../specs/s5/plan.md#恢复目标)、固定开发清单和 A/D 封存来源，不改历史 `night.json`。`replay` 只读这些封存开发预测及必要收据，离线重匹配和统计，不打开原图、标签文件、权重或最终留出。使用已存在的同卷项目外临时目录及全新输出，首次封存见 [`accept_001`](../runs/accept_001/manifest.json)：
+[`accept.json`](accept.json) 锁定新 [五类规则](../specs/s5/plan.md#恢复目标)、固定开发清单和 A/D 封存来源，不改历史 `night.json`。`replay` 只读这些封存开发预测及必要收据，离线重匹配和统计，不打开原图、标签文件、权重或最终留出。使用已存在的同卷项目外临时目录及全新输出，首次封存见 “accept_001”（本地 `runs/accept_001/manifest.json`）：
 
 ```powershell
 .venv-train/Scripts/python.exe -B scripts/night_accept.py replay --protocol-sha256 '<审核确认的 accept.json SHA-256>' --scratch '<同卷项目外任务目录>' --output runs/accept_NNN
@@ -246,36 +246,36 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 [`hard.json`](hard.json) 固定仅图分数来源和 [S6 名单与支持门](../specs/s6/hard.md)。`select` 生成 `pool_007`；`support` 要求该名单的封存清单 SHA，之后才以只读方式核验入选标签并生成 `hard_001`；`verify` 要求两个清单 SHA，重复隔离验证，不读任何其他标签或启动模型。
 
 ```powershell
-.venv-train/Scripts/python.exe -B scripts/night_hard.py select --config-sha256 '<hard.json SHA-256>' --scratch D:/Temp
-.venv-train/Scripts/python.exe -B scripts/night_hard.py support --config-sha256 '<hard.json SHA-256>' --selection-sha256 '<pool_007 SHA-256>' --scratch D:/Temp
-.venv-train/Scripts/python.exe -B scripts/night_hard.py verify --config-sha256 '<hard.json SHA-256>' --selection-sha256 '<pool_007 SHA-256>' --support-sha256 '<hard_001 SHA-256>' --scratch D:/Temp
+.venv-train/Scripts/python.exe -B scripts/night_hard.py select --config-sha256 '<hard.json SHA-256>' --scratch $env:TEMP
+.venv-train/Scripts/python.exe -B scripts/night_hard.py support --config-sha256 '<hard.json SHA-256>' --selection-sha256 '<pool_007 SHA-256>' --scratch $env:TEMP
+.venv-train/Scripts/python.exe -B scripts/night_hard.py verify --config-sha256 '<hard.json SHA-256>' --selection-sha256 '<pool_007 SHA-256>' --support-sha256 '<hard_001 SHA-256>' --scratch $env:TEMP
 ```
 
 [`joint.json`](joint.json) 将这两份封存绑定到同名单训练：先原损失控制，再联合损失，两臂从 A 独立重启，结束后用 `verify` 从封存的昼夜对象重算效果而不重训或推理。
 
 ```powershell
-.venv-train/Scripts/python.exe -B scripts/night_joint.py run --config-sha256 '<joint.json SHA-256>' --scratch D:/Temp
+.venv-train/Scripts/python.exe -B scripts/night_joint.py run --config-sha256 '<joint.json SHA-256>' --scratch $env:TEMP
 .venv-train/Scripts/python.exe -B scripts/night_joint.py verify --config-sha256 '<joint.json SHA-256>' --manifest-sha256 '<hard_002 SHA-256>'
 ```
 
 [`split.json`](split.json) 复用 `hard_002/control`，依次训练 `loc`、`negative` 两臂。`verify-split` 只读完整开发证据，重算与同名单原损失的对比及两层白天保护。无须重跑百图排序或历史控制。
 
 ```powershell
-.venv-train/Scripts/python.exe -B scripts/night_joint.py split --config-sha256 '<split.json SHA-256>' --scratch D:/Temp
+.venv-train/Scripts/python.exe -B scripts/night_joint.py split --config-sha256 '<split.json SHA-256>' --scratch $env:TEMP
 .venv-train/Scripts/python.exe -B scripts/night_joint.py verify-split --config-sha256 '<split.json SHA-256>' --manifest-sha256 '<hard_003 SHA-256>'
 ```
 
 [`quality.json`](quality.json) 锁定 [仅 IoU 质量分类](../specs/s6/hard.md#仅质量分类)，复用同一原损失控制；不重新训练历史臂。新封存为 `hard_004`。
 
 ```powershell
-.venv-train/Scripts/python.exe -B scripts/night_joint.py quality --config-sha256 '<quality.json SHA-256>' --scratch D:/Temp
+.venv-train/Scripts/python.exe -B scripts/night_joint.py quality --config-sha256 '<quality.json SHA-256>' --scratch $env:TEMP
 .venv-train/Scripts/python.exe -B scripts/night_joint.py verify-quality --config-sha256 '<quality.json SHA-256>' --manifest-sha256 '<hard_004 SHA-256>'
 ```
 
 [`distill.json`](distill.json) 锁定 [白天回放蒸馏](../specs/s6/hard.md#白天回放蒸馏)，先在白天训练子集验证冻结教师信号，再运行同名单处理臂并封存 `hard_005`；历史原损失控制只读复用。
 
 ```powershell
-.venv-train/Scripts/python.exe -B scripts/night_joint.py distill --config-sha256 '<distill.json SHA-256>' --scratch D:/Temp
+.venv-train/Scripts/python.exe -B scripts/night_joint.py distill --config-sha256 '<distill.json SHA-256>' --scratch $env:TEMP
 .venv-train/Scripts/python.exe -B scripts/night_joint.py verify-distill --config-sha256 '<distill.json SHA-256>' --manifest-sha256 '<hard_005 SHA-256>'
 ```
 
@@ -284,6 +284,6 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 [`crop.json`](crop.json) 绑定 [训练局部放大](../specs/s7/plan.md#夜间局部放大支持)的几何收据与固定原平衡臂；原白天回放与开发推理不变。参数处理与配比、车型分差排他。
 
 ```powershell
-.venv-train/Scripts/python.exe -B scripts/night_expand.py run --arm e2 --config-sha256 '<expand.json SHA-256>' --crop-sha256 '<crop.json SHA-256>' --d300 runs/expand_001 --d300-sha256 '<随机封存清单 SHA-256>' --scratch D:/Temp --output runs/expand_007
+.venv-train/Scripts/python.exe -B scripts/night_expand.py run --arm e2 --config-sha256 '<expand.json SHA-256>' --crop-sha256 '<crop.json SHA-256>' --d300 runs/expand_001 --d300-sha256 '<随机封存清单 SHA-256>' --scratch $env:TEMP --output runs/expand_007
 .venv-train/Scripts/python.exe -B scripts/night_expand.py verify --output runs/expand_007
 ```

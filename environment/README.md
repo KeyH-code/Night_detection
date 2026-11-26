@@ -1,8 +1,10 @@
 # 环境
 
+CPU 单图示例沿用 [快速运行](../README.md#快速运行) 的独立环境。下面的训练环境用于正式 CUDA 训练、诊断和评价。
+
 数据与训练环境分开，不修改已有学习环境。
 
-- 数据：`python -m venv .venv-data`，随后`.venv-data/Scripts/python.exe -m pip install -r environment/data.txt`。数据测试不需要torch。
+- 数据：`python -m venv .venv-data`，随后`.venv-data/Scripts/python.exe -m pip install -r environment/data.txt`。数据回归另装 `pytest==9.0.2`，用 `python -B -m pytest tests/data -q -p no:cacheprovider` 运行，无需 PyTorch 或真实数据。
 - Windows训练：使用Python3.12运行`powershell -File environment/setup-windows.ps1`。
 - Linux训练：使用Python3.12运行`bash environment/setup-linux.sh`；迁移包会先做白名单校验。两平台使用带哈希依赖锁，不能静默升级版本。
 - `training.in`为依赖需求，`requirements-windows.lock`、`requirements-linux.lock`为安装锁；正式A的Linux实际环境及当时锁另存`runs/a_001/environment/`。
@@ -28,12 +30,14 @@ U正式训练及完整本地评价后，使用`python scripts/source_control.py 
 固定best的S2入口为scripts/diagnose.py，只允许source_train/dev。使用现有Windows锁，不新增依赖；完整集采集含沙箱副本，临时目录必须在仓库外。下面的scratch示例按实际任务设置，不复用来源不明的临时目录；collect拒绝覆盖结果目录。
 
 ```powershell
-.venv-train/Scripts/python.exe -B scripts/diagnose.py collect --scratch D:/Temp/night_s2_a001
-.venv-train/Scripts/python.exe -B scripts/diagnose.py analyze --scratch D:/Temp/night_s2_a001
-.venv-train/Scripts/python.exe -B scripts/diagnose.py trace --scratch D:/Temp/night_s2_a001
+$diagnosticScratch = Join-Path $env:TEMP 'night_s2_a001'
+New-Item -ItemType Directory -Force $diagnosticScratch | Out-Null
+.venv-train/Scripts/python.exe -B scripts/diagnose.py collect --scratch $diagnosticScratch
+.venv-train/Scripts/python.exe -B scripts/diagnose.py analyze --scratch $diagnosticScratch
+.venv-train/Scripts/python.exe -B scripts/diagnose.py trace --scratch $diagnosticScratch
 .venv-train/Scripts/python.exe -B scripts/plot.py --diagnostic runs/a_001_diag
-.venv-train/Scripts/python.exe -B scripts/diagnose.py audit --scratch D:/Temp/night_s2_a001
-.venv-train/Scripts/python.exe -B scripts/diagnose.py review --scratch D:/Temp/night_s2_a001 --port 8766
+.venv-train/Scripts/python.exe -B scripts/diagnose.py audit --scratch $diagnosticScratch
+.venv-train/Scripts/python.exe -B scripts/diagnose.py review --scratch $diagnosticScratch --port 8766
 ```
 
 默认权重、READY及外部SHA绑定a_001/source_v1，规则门槛直接读取RULES.md并保存其SHA。collect做工程等价核验和完整4500图采集，analyze只读导出数值计算AP、实际工作点/错误/切片/区间，trace按登记子集补采中间候选；不修改现有evaluate、monitor或云门禁。
@@ -56,14 +60,22 @@ review在127.0.0.1提供简单临时审核页，仅按已核验key读取图片�
 
 完整预检保持100轮学习率/关闭Mosaic日程，在第2轮后受控停止；失败预检重新从COCO开始。每轮4000训练槽位/500 dev选模及权重重载的真实时间/空间单列；4000 train评价、最终逐图导出和配对分析在本地完成，预检两轮属于冷启动/warmup，不冒充稳态/关闭Mosaic阶段测量。formal恢复只接受相同新身份的完整轮last，重新从核验过的白名单建立外部沙箱；不读已失效的数据路径。
 
-本地复用检查：`python -B -m pytest tests/data tests/train -q -p no:cacheprovider --basetemp <项目外本轮测试目录>`。包含真实workers4消费/关闭Mosaic/退出、合成模型连续与恢复数值对照、CUDA下EMA与重载一致性，以及门禁/无best分支；这些不是正式候选训练或新云预检。
+## 回归
+
+干净克隆可以在对应训练环境运行以下检查。数据测试命令见本文开头。
+
+```powershell
+python -B -m pytest tests/train/diagnose tests/train/test_night_train.py tests/train/test_bundle.py -q -p no:cacheprovider
+```
+
+完整白天历史回归还需要本地 A 的训练和开发收据、配方快照，以及与 S3 封存身份一致的原版配置和计划。公开候选的 S3 计划已隐去本机路径。拥有完整封存时，到原实验工作区运行 `python -B -m pytest tests/data tests/train -q -p no:cacheprovider --basetemp <项目外本轮测试目录>`。包含真实workers4消费/关闭Mosaic/退出、合成模型连续与恢复数值对照、CUDA下EMA与重载一致性，以及门禁/无best分支；这些不是正式候选训练或新云预检。
 
 本地收尾使用 evaluate.py --finalize-run runs/a_002/train --ready-sha256 <冻结SHA>（a_003同理）。需完整回传train目录，不只下载角色权重；默认source_v1路径为本项目冻结目录。入口核验代码/文件哈希及框架版本，生成本地train/dev证据并更新evaluation_status；跨设备差异记录，不静默更换阈值/权重。云端pending_local_evaluation阶段不能直接配对分析。
 
 Windows启动本地评价前，先在同一PowerShell中将TEMP/TMP和NIGHT_SOURCE_SCRATCH指向仓库外D盘任务目录，避免沙箱落到系统盘。必须在启动Python之前设置，不能依赖进程启动后更改环境变量来覆盖tempfile已缓存的路径。以下命令会实际运行完整评价，准备或下载检查时不执行最后一行：
 
 ```powershell
-$taskScratch = 'D:\Temp\night_s3_local'
+$taskScratch = Join-Path $env:TEMP 'night_s3_local'
 New-Item -ItemType Directory -Path $taskScratch -Force | Out-Null
 $env:TEMP = $taskScratch
 $env:TMP = $taskScratch

@@ -34,6 +34,8 @@ _netrc
 .git-credentials
 /credentials.json
 /configs/gpu.local.json
+# Historical manual review inputs are local evidence.
+/configs/rerank.json
 
 # Python/tool caches and generated logs; do not ignore maintained tests or reports.
 __pycache__/
