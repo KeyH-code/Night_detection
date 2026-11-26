@@ -208,6 +208,8 @@ errors.json维护同一配对的探索性工作点增量FP、逐IoU匹配/AP、I
 
 ## S6
 
+[`specs/s6/plan.md`](specs/s6/plan.md) 维护对照阶段状态、共同配方和 E1→E2 的衔接；[`specs/s6/e1.md`](specs/s6/e1.md) 与 [`specs/s6/e2.md`](specs/s6/e2.md) 分别维护各臂机制对照的假设、配置、执行细节和收尾门。计划不作实验收据，结果归封存 run 及报告。
+
 [`specs/s6/hard.md`](specs/s6/hard.md) 维护困难尾类百图的仅图排名、入选标签支持与训练接续。`configs/hard.json` 绑定封存来源，`scripts/night_hard.py` 分离仅图排行与后置入选标签核验，长期边界回归归 `tests/train/diagnose/test_night_hard.py`。`runs/pool_007/` 留仅图名单和实际读取回执，`runs/hard_001/` 留支持和身份；不复制图、标签或旧分数。
 
 `configs/joint.json` 固定已核验百图及联合损失，`scripts/night_joint.py` 执行、复算同名单控制和处理，`tests/train/test_night_joint.py` 保护损失隔离及几何语义。`runs/hard_002/` 留实际两臂同序输入收据、末轮权重、指标及 SHA；失败只声明已完成部分。
@@ -280,6 +282,8 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 `scripts/night_supplement.py` 是仅图补样入口：独立工作器读取许可原图，`verify` 可由盲分复算两臂名单。开标后的材料检查单独使用 `scripts/night_material.py`，可从封存候选匹配证据复算结果，无需再次开标签。
 
+[340 图配对训练](specs/s7/paired.md)由 `scripts/night_paired.py` 执行，`scripts/night_paired_replay.py` 从封存预测和训练收据独立复算。`runs/expand_013/` 和 `runs/expand_014/` 分存定向、随机两臂训练与开发证据；`runs/supp_002/` 对两臂排程和相对原控制的配对结果建立共同索引。
+
 `scripts/night_truck.py` 是 [卡车独立分数迁移](specs/s7/plan.md#卡车独立分数迁移)的同锚校正与预检入口。`runs/truck_<编号>/` 留支持、身份和代码快照；正式对照复用 `scripts/night_expand.py run --truck-sha256` 与 `expand_` 封存。`tests/train/test_night_truck.py` 保护作用范围、索引、支持门槛及折回隔离。
 
 `scripts/night_floor.py` 是 [有轨车辆正分保底](specs/s7/plan.md#有轨车辆正分保底)的损失与训练侧 `probe` / `verify` 入口；`runs/floor_<编号>/` 留汇总、身份及执行代码快照。正式对照复用 `scripts/night_expand.py run --floor-sha256` 与 `expand_` 封存，`coverage.json` 附同名单训练侧逐层匿名覆盖。`tests/train/test_night_floor.py` 保护索引、同锚贴合、梯度与覆盖门槛。
@@ -298,13 +302,15 @@ S7 的 [`configs/expand.json`](configs/expand.json) 和 `scripts/night_expand.py
 
 [`configs/margin.json`](configs/margin.json) 锁 [S7 原生车型分差](specs/s7/plan.md#原生车型分差)的亲本和强度；`scripts/night_margin.py` 提供只触及夜间车辆分配正例的训练损失，回归归 `tests/train/test_night_margin.py`。复用 `night_expand.py` 与新 `runs/expand_<编号>/`，额外的 `margin.json`、实际信号和同名单配对绑定本次处理；原平衡臂不回写。
 
-[`specs/s6/plan.md`](specs/s6/plan.md) 维护对照阶段状态、共同配方和 E1→E2 的衔接；[`specs/s6/e1.md`](specs/s6/e1.md) 单独维护 E1 机制对照的假设、配置、执行细节和收尾门。计划不作实验收据，结果归封存 run 及报告。
-
 `scripts/night_train.py` 是随机臂本机训练及开发评价入口，`configs/adapt.json` 锁配方和基线身份；`tests/train/test_night_train.py` 保护轮序、用途与框几何。`runs/d_<编号>/` 保存正式随机臂原始记录：各 seed 的 `inputs.json`、`train.json`、`last.pt`、`dev/` 和采样 GPU 数据；批次预检仅保存证据，不保留预检权重、图片、标签内容或缓存。`protocol.json`、`code/`、`run.json` 及 `manifest.json` 绑定状态和复查范围；代码快照非活动入口。
 
 `scripts/night_adapt.py` 为 E1/E2 本机配对入口，活动身份归 `configs/pair.json`，复用 D 的训练核心和五类评价。`align` 只读名单和 D 实际轮序，`run` 只启动指定策略臂。`runs/e1_<编号>/`、`runs/e2_<编号>/` 保存 `slots.json`（选样顺序、D 原槽位、映射及复算身份）、`preflight.json`、逐 seed 的输入、训练日志、`last.pt` 与两域开发预测/评价，以及 `comparison.json`（实际完成三个 seed 后产生的 D 配对结果）。`protocol.json`、`run.json`、`code/`、`manifest.json` 绑定身份和已完成范围；失败 run 不冒称完成。标签准备仅给指定 arm/seed 的窄输入在项目外暂存；不保留原图、标签内容、预检权重或缓存。
 
 `configs/ratio.json` 锁定 [S6 单种子比例探索](specs/s6/plan.md#单种子比例探索)，既有选样与训练入口通过独立 `ratio` 模式执行。`runs/pool_004/` 的 `lists.json` 保存四份探索名单、排序证据和重合数，`ratio.json`、`run.json`、`code/`、`manifest.json` 绑定首版回放和读取边界，不复制特征或分数。策略训练同系列的新 run 用 `ratio` 身份区分，`comparison.json` 改记单 seed 相对 D 和同策略首版的两套配对；不是三种子复验结果。
+
+`configs/e1.json` 锁定 [E1 机制实验](specs/s6/e1.md)。选样和训练入口的 `mechanism` 模式只接受首轮注册的 seed 与每类名额。`runs/pool_005/` 保存 `lists.json`（首版重放、分阶段归属、图名单和重合）、配置、读取回执及封存；原特征和分数只引用。`runs/e1_<编号>/` 沿用策略训练产物结构，以 `mechanism` 运行身份区分，`comparison.json` 保存与同 seed D 和 `0/16` 两套对照，不当多 seed 复验。
+
+`configs/e2.json` 锁定 [E2 机制实验](specs/s6/e2.md)。选样和训练入口的 `e2-mechanism` 模式只接受 seed 43 与所注册的代表／多样名额。`runs/pool_006/` 封存 `30/30` 重放、两档选样顺序、阶段、风险组覆盖和特征读取范围；原图特征不复制。`runs/e2_<编号>/` 沿用策略训练产物结构，`comparison.json` 保存同 seed D 和 `30/30` 两套参照的结果。
 
 [`specs/s6/rank.md`](specs/s6/rank.md) 维护低误报排序的诊断、训练动机和取舍。`configs/rank.json` 绑定实验；`scripts/night_rank.py` 复用封存 E1 名单及已锁开发评价，只写独立 `runs/rank_<编号>/` 的输入、训练、末轮权重、开发输出、配对指标、实际代码/配置及清单。原图、标签和特征副本不保留；长期回归在 `tests/train/test_night_rank.py`。
 

@@ -13,3 +13,5 @@
 /configs/rerank.json text eol=crlf
 /configs/source_s3_control.json text eol=crlf
 /specs/s3/plan.md text eol=crlf
+# The paired night experiment binds the Markdown bytes.
+/specs/s7/paired.md text eol=lf
