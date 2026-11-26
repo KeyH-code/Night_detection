@@ -169,10 +169,16 @@ def _geometry(keys, vectors, anchors):
     return order, ordered, cos, selected
 
 
-def rank_e1(keys, vectors, scores, anchors, *, shortlist=64, quota=16):
+class MechanismQuotaError(ContractError):
+    """No fallback is allowed in a mechanism comparison."""
+
+
+def rank_e1(keys, vectors, scores, anchors, *, shortlist=64, quota=16, score_quota=None):
     order, ordered, cos, selected = _geometry(keys, vectors, anchors)
     if type(shortlist) is not int or type(quota) is not int or min(shortlist, quota) <= 0:
         raise ContractError('Invalid E1 shortlist settings')
+    if score_quota is not None and (type(score_quota) is not int or not 0 <= score_quota <= quota):
+        raise ContractError('Invalid E1 score stage quota')
     u = _scores(keys, scores)[order]
     chosen = set(selected)
     pool = [i for i in range(len(keys)) if i not in chosen]
@@ -187,19 +193,30 @@ def rank_e1(keys, vectors, scores, anchors, *, shortlist=64, quota=16):
     distance = 1-cos[:, selected].max(axis=1)
     counts, steps = [0]*CLASS_COUNT, []
 
-    def pick(candidates, values, c):
-        i = min(candidates, key=lambda j: (-round(float(distance[j]), 12), -round(float(values[j]), 12), ordered[j]))
-        steps.append({'key': ordered[i], 'class_id': c, 'distance': float(distance[i]), 'score': float(values[i])})
+    def pick(candidates, values, c, stage='diversity'):
+        def order_key(j):
+            score_key = (-round(float(values[j]), 12), ordered[j])
+            return score_key if stage == 'score' else (-round(float(distance[j]), 12), *score_key)
+
+        i = min(candidates, key=order_key)
+        step = {'key': ordered[i], 'class_id': c, 'distance': float(distance[i]), 'score': float(values[i])}
+        if score_quota is not None:
+            step['stage'] = stage
+        steps.append(step)
         selected.append(i)
         chosen.add(i)
         np.minimum(distance, 1-cos[:, i], out=distance)
 
-    for _ in range(quota):
+    for round_index in range(quota):
+        stage = 'score' if score_quota is not None and round_index < score_quota else 'diversity'
         for c, subset in enumerate(lists):
             candidates = set(subset) - chosen
             if candidates:
-                pick(candidates, u[:, c], c)
+                pick(candidates, u[:, c], c, stage)
                 counts[c] += 1
+            elif score_quota is not None:
+                raise MechanismQuotaError(f'E1 {stage} phase class {c} exhausted in round {round_index + 1}; '
+                                          f'counts={counts}, shortlist_union={len(union)}; no fallback used')
     largest = np.zeros(len(keys))
     for c, subset in enumerate(lists):
         largest[subset] = np.maximum(largest[subset], u[subset, c])
@@ -275,7 +292,7 @@ def rank_e2(keys, groups, vectors, anchors, *, representatives=40, diverse=40, n
 
 
 def run_rank_worker(arm, features, metadata, *, scores=None):
-    if arm not in ('e1', 'e2') or (arm == 'e1' and scores is None):
+    if arm not in ('e1', 'e1-mechanism', 'e2') or (arm != 'e2' and scores is None):
         raise ContractError('Expected E1 with scores or E2 with features only')
     if arm == 'e2' and scores is not None:
         raise ContractError('E2 cannot accept scores')
@@ -298,19 +315,23 @@ def run_rank_worker(arm, features, metadata, *, scores=None):
 
 def _rank_payload(arm, features, scores, metadata):
     feature_path = Path(features).absolute()
+    e1 = arm in ('e1', 'e1-mechanism')
     if feature_path.name != 'features.npz':
         raise ContractError('Expected separate feature-only file')
-    if arm == 'e1' and (scores is None or Path(scores).absolute() != feature_path.with_name('scores.npz')):
+    if e1 and (scores is None or Path(scores).absolute() != feature_path.with_name('scores.npz')):
         raise ContractError('E1 requires a separate E1 score file')
     if arm == 'e2' and scores is not None:
         raise ContractError('E2 cannot accept scores')
-    if arm not in ('e1', 'e2'):
+    if not e1 and arm != 'e2':
         raise ContractError('Unknown strategy arm')
     fields = {'keys', 'anchors', 'params'} | ({'groups'} if arm == 'e2' else set())
     check_equal('ranking metadata fields', fields, set(metadata) if isinstance(metadata, dict) else None)
     params = metadata['params']
-    check_equal('ranking parameter fields', {'shortlist', 'quota'} if arm == 'e1' else
-                {'representatives', 'diverse', 'neighbors'}, set(params) if isinstance(params, dict) else None)
+    expected_params = ({'shortlist', 'quota', 'score_quota'} if arm == 'e1-mechanism' else
+                       {'shortlist', 'quota'} if e1 else {'representatives', 'diverse', 'neighbors'})
+    check_equal('ranking parameter fields', expected_params, set(params) if isinstance(params, dict) else None)
+    if arm == 'e1-mechanism' and type(params['score_quota']) is not int:
+        raise ContractError('Mechanism worker requires an integer score quota')
     allowed = [feature_path] + ([Path(scores).absolute()] if scores is not None else [])
     for path in allowed:
         _no_reparse(path)
@@ -325,11 +346,16 @@ def _rank_payload(arm, features, scores, metadata):
     reads = worker_files(readable=allowed)
     keys, vectors = load_features(feature_path)
     check_equal('exact feature keys', metadata['keys'], keys)
-    u = _load_e1_scores(allowed[1], keys) if arm == 'e1' else None
+    u = _load_e1_scores(allowed[1], keys) if e1 else None
     results = {}
     for seed, anchors in metadata['anchors'].items():
-        results[seed] = (rank_e1(keys, vectors, u, anchors, **metadata['params']) if arm == 'e1' else
-                         rank_e2(keys, metadata['groups'], vectors, anchors, **metadata['params']))
+        try:
+            results[seed] = (rank_e1(keys, vectors, u, anchors, **params) if e1 else
+                             rank_e2(keys, metadata['groups'], vectors, anchors, **params))
+        except MechanismQuotaError as exc:
+            if arm != 'e1-mechanism':
+                raise
+            results[seed] = {'quota_failure': str(exc)}
     check_equal('ranking worker allowed reads', allowed, reads)
     return {'arms': results, 'reads': [p.name for p in reads]}
 
@@ -747,6 +773,255 @@ def run_ratio_selection(protocol_sha, scratch, output):
     print(f'Sealed {output.name}; all four ratio manifests, no training', flush=True)
 
 
+def mechanism_config(protocol_sha, reads):
+    raw = read_sealed_bytes(ROOT, 'configs/e1.json', protocol_sha, reads)
+    cfg = json.loads(raw)
+    check_equal('approved E1 mechanism sweep', (1, 43, 20, [16, 8], {'e1'}),
+                (cfg['schema_version'], cfg['seed'], cfg['random_count'], cfg['score_quotas'], set(cfg['first_runs_sha256'])))
+    return raw, cfg
+
+
+def mechanism_rows(score_quota, anchors, pick, by_key):
+    if type(score_quota) is not int or score_quota not in (0, 8, 16):
+        raise ContractError('Unknown registered E1 mechanism quota')
+    keys = pick['keys']
+    check_equal('E1 mechanism count and prefix', (20, 100, 100, anchors), (len(anchors), len(keys), len(set(keys)), keys[:20]))
+    if any(k not in by_key for k in keys):
+        raise ContractError('E1 mechanism picked a key outside the image-only pool')
+    check_equal('E1 mechanism quota and fallback', ([16]*CLASS_COUNT, [0]*CLASS_COUNT), (pick['per_class'], pick['shortfalls']))
+    expected = [(k, c, 'score' if i//CLASS_COUNT < score_quota else 'diversity')
+                for i,k in enumerate(keys[20:]) for c in [i % CLASS_COUNT]]
+    check_equal('E1 mechanism phase and category order', expected, [(s['key'], s['class_id'], s['stage']) for s in pick['steps']])
+    return [by_key[k] for k in keys]
+
+
+def _publish_mechanism(evidence, output, code, scope):
+    for name, digest in code.items():
+        to = evidence/'code/scripts'/name
+        to.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT/'scripts'/name, to)
+        check_equal('archived mechanism selection code', digest, sha256(to))
+    files = {p.relative_to(evidence).as_posix(): {'sha256': sha256(p), 'bytes': p.stat().st_size}
+             for p in sorted(evidence.rglob('*')) if p.is_file()}
+    write_json(evidence/'manifest.json', {'status': 'sealed', 'scope': scope, 'files': files})
+    if output.exists() or output.is_symlink():
+        raise ContractError('Refusing to overwrite a mechanism run')
+    evidence.rename(output)
+    for rel, item in files.items():
+        p = output/rel
+        check_equal('published mechanism file', (item['bytes'], item['sha256']), (p.stat().st_size, sha256(p)))
+
+
+def run_mechanism_selection(protocol_sha, scratch, output):
+    scratch, output = _strategy_paths(scratch, output)
+    reads = []
+    raw, cfg = mechanism_config(protocol_sha, reads)
+    _, strategy = _strategy_config(cfg['strategy_sha256'], reads=reads)
+    pair = read_sealed_json(ROOT, 'configs/pair.json', cfg['pair_sha256'], reads)
+    parent = ROOT/'runs/pool_002'
+    seal = read_sealed_json(ROOT, 'runs/pool_002/manifest.json', pair['pool_manifest_sha256']['e1'], reads)
+    check_equal('E1 mechanism parent', ('sealed', 'E1 and shared feature capture only', cfg['strategy_sha256']),
+                (seal['status'], seal['scope'], seal['files']['strategy.json']['sha256']))
+    manifest = read_sealed_json(ROOT, f'data/soda10m/splits/night_v1/{POOL_MANIFEST}', strategy['images_sha256'], reads)
+    rows = sorted(_records(manifest, POOL, strategy['pool_count'], images_only=True), key=lambda r: r['key'])
+    by_key = {r['key']: r for r in rows}
+    seed = str(cfg['seed'])
+    anchors, random = _anchor_lists(strategy, rows, reads=reads)
+    first = json.loads(_ratio_file(parent, seal, 'e1.json', reads))
+    check_equal('E1 original ranking receipt', ('night_pool_strategy_e1', strategy['images_sha256']), (first['purpose'], first['images_sha256']))
+    first = first['arms'][seed]
+    code = {name: sha256(ROOT/'scripts'/name) for name in ('night_strategy.py', 'night_contract.py', 'night_select.py', 'source_contract.py')}
+    print('Scope: E1 mechanism, seed 43, verified image-only list and sealed E1 scores/features; no raw payload.', flush=True)
+    with tempfile.TemporaryDirectory(prefix='mechanism-', dir=scratch) as td:
+        base = Path(td)
+        box = base/'input'
+        box.mkdir()
+        feature_path, score_path = box/'features.npz', box/'scores.npz'
+        for path in (feature_path, score_path):
+            path.write_bytes(_ratio_file(parent, seal, path.name, reads))
+        keys, z = load_features(feature_path)
+        check_equal('mechanism feature identity', (list(by_key), (994, 512)), (keys, z.shape))
+        vector_ids = {key: i for i,key in enumerate(keys)}
+        d_keys = set(random[seed])
+        known = {'D': d_keys, '0/16': set(first['keys'])}
+        results = {}
+        for q in (0, *cfg['score_quotas']):
+            params = dict(strategy['e1'], score_quota=q)
+            metadata = {'keys': keys, 'anchors': {seed: anchors[seed]}, 'params': params}
+            result = run_rank_worker('e1-mechanism', feature_path, metadata, scores=score_path)
+            check_equal('mechanism worker reads', ['features.npz', 'scores.npz'], result['reads'])
+            check_equal('mechanism deterministic replay', result, run_rank_worker('e1-mechanism', feature_path, metadata, scores=score_path))
+            pick = result['arms'][seed]
+            name = f'{q}/{16-q}'
+            if q and 'quota_failure' in pick:
+                results[str(q)] = {'status': 'quota_failure', 'params': params, 'reason': pick['quota_failure']}
+                print(f'{name}: {pick["quota_failure"]}', flush=True)
+                continue
+            picked = mechanism_rows(q, anchors[seed], pick, by_key)
+            if q == 0:
+                def step_keys(steps):
+                    return [(s['key'], s['class_id'], round(s['distance'], 12), round(s['score'], 12)) for s in steps]
+                check_equal('exact 0/16 endpoint ordered replay', (first['keys'], first['per_class'], first['shortfalls'], step_keys(first['steps'])),
+                            (pick['keys'], pick['per_class'], pick['shortfalls'], step_keys(pick['steps'])))
+                print('0/16 ordered first-arm ranking and step evidence reproduced', flush=True)
+            selected = set(pick['keys'])
+            duplicate_of = next((k for k,v in known.items() if v == selected), None) if q else None
+            ids = [vector_ids[k] for k in pick['keys'][20:]]
+            v = z[ids]
+            similarities = np.clip(v @ v.T, -1, 1)[np.triu_indices(len(ids), k=1)]
+            results[str(q)] = {**pick, 'params': params, 'status': 'reference' if not q else 'duplicate' if duplicate_of else 'ready',
+                               'duplicate_of': duplicate_of, 'records': picked, 'record_sha256': canonical_hash(picked),
+                               'groups': len({r['group_id'] for r in picked}),
+                               'new_groups': len({r['group_id'] for r in picked[20:]}),
+                               'mean_added_pair_cosine': float(similarities.mean()),
+                               'mean_added_score': float(np.mean([s['score'] for s in pick['steps']])),
+                               'overlap_with_D': len(selected & d_keys), 'overlap_with_first': len(selected & known['0/16'])}
+            known[name] = selected
+            if q:
+                print(f'{name}: {results[str(q)]["status"]}; 100 unique, D overlap={len(selected & d_keys)}', flush=True)
+        evidence = base/'evidence'
+        evidence.mkdir()
+        write_json(evidence/'lists.json', {'purpose': 'night_pool_e1_mechanism', 'seed': cfg['seed'], 'images_sha256': strategy['images_sha256'],
+                                           'arms': results})
+        (evidence/'e1.json').write_bytes(raw)
+        write_json(evidence/'run.json', {'status': 'sealed_e1_mechanism_selection', 'protocol_sha256': protocol_sha, 'reads': reads,
+                                        'worker_reads': ['features.npz', 'scores.npz'], 'first_replay_exact': True,
+                                        'pool_manifest_sha256': pair['pool_manifest_sha256']['e1'], 'code_sha256': code,
+                                        'numpy': np.__version__, 'python': sys.version, 'labels_read': False,
+                                        'prediction_performed': False, 'training_performed': False})
+        _publish_mechanism(evidence, output, code, 'E1 mechanism selection only')
+    print(f'Sealed {output.name}; selection only', flush=True)
+
+
+def e2_mechanism_config(protocol_sha, reads):
+    raw = read_sealed_bytes(ROOT, 'configs/e2.json', protocol_sha, reads)
+    cfg = json.loads(raw)
+    check_equal('approved E2 mechanism sweep', (1, 43, 40, [40, 20]),
+                (cfg['schema_version'], cfg['seed'], cfg['random_count'], cfg['representatives']))
+    return raw, cfg
+
+
+def e2_mechanism_rows(representatives, d_keys, pick, by_key):
+    if type(representatives) is not int or representatives not in (20, 30, 40):
+        raise ContractError('Unknown registered E2 mechanism quota')
+    keys = pick['keys']
+    check_equal('E2 mechanism count and D prefix', (100, 100, d_keys[:40]), (len(keys), len(set(keys)), keys[:40]))
+    if any(k not in by_key for k in keys):
+        raise ContractError('E2 mechanism picked a key outside the image-only pool')
+    rows = [by_key[k] for k in keys]
+    anchor_groups = {r['group_id'] for r in rows[:40]}
+    tail_groups = [r['group_id'] for r in rows[40:]]
+    if len(set(tail_groups)) != 60 or anchor_groups.intersection(tail_groups):
+        raise ContractError('E2 mechanism risk groups must be distinct and absent from the D prefix')
+    kinds = ['representative']*representatives + ['diverse']*(60-representatives)
+    check_equal('E2 mechanism phase and group order', list(zip(keys[40:], tail_groups, kinds, strict=True)),
+                [(s['key'], s['group_id'], s['kind']) for s in pick['steps']])
+    return rows
+
+
+def e2_representative_prefix(first, new):
+    common = min(len(first), len(new))
+    check_equal('E2 representative prefix', first[:common], new[:common])
+
+
+def e2_reference_receipt(cfg, reads):
+    """Validate the sealed E2-only schedule receipt, never opening mixed-arm lists.json."""
+    parent = read_sealed_json(ROOT, 'runs/pool_004/manifest.json', cfg['ratio_pool_sha256'], reads)
+    check_equal('E2 30/30 parent identity', ('sealed', 'single-seed ratio selection only', cfg['ratio_sha256']),
+                (parent['status'], parent['scope'], parent['files']['ratio.json']['sha256']))
+    folder = ROOT/'runs/e2_002'
+    seal = read_sealed_json(ROOT, 'runs/e2_002/manifest.json', cfg['first_run_sha256'], reads)
+    run = json.loads(_ratio_file(folder, seal, 'run.json', reads))
+    check_equal('E2 30/30 reference run', ('sealed', 'complete', [43], 'e2', 'S6 single-seed ratio exploration', cfg['ratio_sha256']),
+                (seal['status'], run['status'], run['completed_seeds'], run['arm'], run['scope'], run['protocol_sha256']))
+    ratio = run['ratio']
+    check_equal('E2 30/30 reference provenance', (43, 40, 'runs/pool_004', cfg['ratio_pool_sha256'], cfg['strategy_sha256'], cfg['pair_sha256']),
+                tuple(ratio[k] for k in ('seed', 'random_count', 'pool_run', 'pool_sha256', 'strategy_sha256', 'pair_sha256')))
+    slots = json.loads(_ratio_file(folder, seal, 'slots.json', reads))
+    check_equal('E2 reference slot receipt', ('e2', True, {'43'}), (slots['arm'], slots['slots_verified'], set(slots['seeds'])))
+    return folder, seal, run, slots['seeds']['43']
+
+
+def run_e2_mechanism_selection(protocol_sha, scratch, output):
+    scratch, output = _strategy_paths(scratch, output)
+    reads = []
+    raw, cfg = e2_mechanism_config(protocol_sha, reads)
+    _, strategy = _strategy_config(cfg['strategy_sha256'], reads=reads)
+    pair = read_sealed_json(ROOT, 'configs/pair.json', cfg['pair_sha256'], reads)
+    parent = ROOT/'runs/pool_002'
+    seal = read_sealed_json(ROOT, 'runs/pool_002/manifest.json', pair['pool_manifest_sha256']['e1'], reads)
+    check_equal('E2 mechanism feature parent', ('sealed', 'E1 and shared feature capture only', cfg['strategy_sha256']),
+                (seal['status'], seal['scope'], seal['files']['strategy.json']['sha256']))
+    manifest = read_sealed_json(ROOT, f'data/soda10m/splits/night_v1/{POOL_MANIFEST}', strategy['images_sha256'], reads)
+    rows = sorted(_records(manifest, POOL, strategy['pool_count'], images_only=True), key=lambda r: r['key'])
+    by_key = {r['key']: r for r in rows}
+    seed = str(cfg['seed'])
+    _, random = _anchor_lists(strategy, rows, reads=reads)
+    d_keys = random[seed]
+    _, _, _, prior = e2_reference_receipt(cfg, reads)
+    check_equal('E2 30/30 D anchor identities', (40, d_keys, d_keys[:40]),
+                (prior['random_count'], prior['d_input_slots'], prior['anchors']))
+    code = {name: sha256(ROOT/'scripts'/name) for name in ('night_strategy.py', 'night_contract.py', 'night_select.py', 'source_contract.py')}
+    print('Scope: E2 mechanism seed 43; feature-only ranking, no E1 scores or model replay.', flush=True)
+    with tempfile.TemporaryDirectory(prefix='mechanism-', dir=scratch) as td:
+        base = Path(td)
+        box = base/'input'
+        box.mkdir()
+        feature_path = box/'features.npz'
+        feature_path.write_bytes(_ratio_file(parent, seal, feature_path.name, reads))
+        keys, z = load_features(feature_path)
+        check_equal('E2 mechanism feature identity', (list(by_key), (994, 512)), (keys, z.shape))
+        vector_ids = {k: i for i,k in enumerate(keys)}
+        groups = [r['group_id'] for r in rows]
+        group_sizes = Counter(groups)
+        weights = np.asarray([1/group_sizes[g] for g in groups], dtype=np.float64)
+        known = {'D': set(d_keys), '30/30': set(prior['selection_order'])}
+        results, first_reps = {}, None
+        for n in (30, *cfg['representatives']):
+            params = {'representatives': n, 'diverse': 60-n, 'neighbors': strategy['e2']['neighbors']}
+            metadata = {'keys': keys, 'groups': groups, 'anchors': {seed: d_keys[:40]}, 'params': params}
+            ranked = run_rank_worker('e2', feature_path, metadata)
+            check_equal('E2 mechanism worker reads', ['features.npz'], ranked['reads'])
+            check_equal('E2 mechanism replay', ranked, run_rank_worker('e2', feature_path, metadata))
+            pick = ranked['arms'][seed]
+            picked = e2_mechanism_rows(n, d_keys, pick, by_key)
+            reps = pick['keys'][40:40+n]
+            if n == 30:
+                check_equal('exact E2 30/30 ordered replay', (prior['selection_order'], prior['selection_sha256']),
+                            (pick['keys'], canonical_hash(picked)))
+                first_reps = reps
+                print('30/30 ordered E2-only slot receipt reproduced; exact phases and groups verified', flush=True)
+            else:
+                e2_representative_prefix(first_reps, reps)
+            selected = set(pick['keys'])
+            duplicate_of = next((k for k,v in known.items() if v == selected), None) if n != 30 else None
+            suffix = f'{n}/{60-n}'
+            zs = z[[vector_ids[k] for k in pick['keys']]]
+            similarities = np.clip(zs[40:] @ zs[40:].T, -1, 1)[np.triu_indices(60, k=1)]
+            m = (1+np.clip(z @ zs.T, -1, 1).max(axis=1))/2
+            results[str(n)] = {**pick, 'params': params, 'status': 'reference' if n == 30 else 'duplicate' if duplicate_of else 'ready',
+                               'duplicate_of': duplicate_of, 'records': picked, 'record_sha256': canonical_hash(picked),
+                               'new_groups': len({r['group_id'] for r in picked[40:]}),
+                               'weighted_pool_coverage': float(np.average(m, weights=weights)),
+                               'mean_added_pair_cosine': float(similarities.mean()),
+                               'overlap_with_D': len(selected & known['D']), 'overlap_with_first': len(selected & known['30/30'])}
+            known[suffix] = selected
+            if n != 30:
+                print(f'{suffix}: {results[str(n)]["status"]}; 100 unique, D overlap={len(selected & known["D"])}', flush=True)
+        evidence = base/'evidence'
+        evidence.mkdir()
+        write_json(evidence/'lists.json', {'purpose': 'night_pool_e2_mechanism', 'seed': cfg['seed'], 'images_sha256': strategy['images_sha256'],
+                                           'arms': results, 'new_arm_overlap': len(known['40/20'] & known['20/40'])})
+        (evidence/'e2.json').write_bytes(raw)
+        write_json(evidence/'run.json', {'status': 'sealed_e2_mechanism_selection', 'protocol_sha256': protocol_sha, 'reads': reads,
+                                        'worker_reads': ['features.npz'], 'first_replay_exact': True,
+                                        'pool_manifest_sha256': pair['pool_manifest_sha256']['e1'], 'code_sha256': code,
+                                        'numpy': np.__version__, 'python': sys.version, 'labels_read': False, 'e1_scores_read': False,
+                                        'prediction_performed': False, 'training_performed': False})
+        _publish_mechanism(evidence, output, code, 'E2 mechanism selection only')
+    print(f'Sealed {output.name}; feature-only E2 selection', flush=True)
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == '_rank':
         _, _, arm, features, *tail = sys.argv
@@ -756,7 +1031,7 @@ def main():
         print(json.dumps(result, ensure_ascii=False, allow_nan=False))
         return
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=('e1-preflight', 'e1', 'e2', 'ratio'))
+    parser.add_argument('mode', choices=('e1-preflight', 'e1', 'e2', 'ratio', 'mechanism', 'e2-mechanism'))
     parser.add_argument('--protocol-sha256', required=True)
     parser.add_argument('--scratch', type=Path, required=True)
     parser.add_argument('--output', type=Path)
@@ -774,6 +1049,12 @@ def main():
         parser.error('--e1-run and --e1-manifest-sha256 may only be used for e2')
     if args.mode == 'ratio':
         run_ratio_selection(args.protocol_sha256, args.scratch, args.output)
+        return
+    if args.mode == 'mechanism':
+        run_mechanism_selection(args.protocol_sha256, args.scratch, args.output)
+        return
+    if args.mode == 'e2-mechanism':
+        run_e2_mechanism_selection(args.protocol_sha256, args.scratch, args.output)
         return
     run_e1(args.protocol_sha256, args.scratch, args.output, preflight=args.mode == 'e1-preflight')
 

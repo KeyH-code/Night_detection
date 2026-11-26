@@ -126,3 +126,54 @@ def test_ratio_slot_task_checks_more_than_the_original_twenty_anchors():
     picks[58], picks[59] = picks[59], picks[58]
     with pytest.raises(ContractError, match='prefix'):
         ratio_slot_task(43, 60, days, [{'key': k} for k in picks], cfg, previous)
+
+
+def test_mechanism_training_accepts_only_registered_e1_seed_and_exact_rank_payload():
+    from night_adapt import mechanism_slot_task
+    from night_train import schedule
+    from source_contract import canonical_hash
+
+    d = [f'val:{i}' for i in range(100)]
+    days = [f'train:{i}' for i in range(2000)]
+    cfg = {'schedule_salt': 20261122, 'flip_probability': .5, 'brightness': [.85, 1.15]}
+    prior = {'d_input_slots': d, 'input_slots': d, 'd_schedule_sha256': canonical_hash(schedule(43, days, d))}
+    keys = [*d[:20], *[f'val:{i}' for i in range(150, 230)]]
+    rows = [{'key': k, 'group_id': f'g{i}'} for i,k in enumerate(keys)]
+    steps = [{'key': k, 'class_id': i % 5, 'stage': 'score' if i < 40 else 'diversity'}
+             for i,k in enumerate(keys[20:])]
+    entry = {'status': 'ready', 'keys': keys, 'records': rows, 'record_sha256': canonical_hash(rows),
+             'params': {'shortlist': 64, 'quota': 16, 'score_quota': 8}, 'steps': steps,
+             'per_class': [16]*5, 'shortfalls': [0]*5, 'overlap_with_D': 20, 'overlap_with_first': 20}
+    by_key = {r['key']: r for r in rows}
+    assert mechanism_slot_task(43, 8, entry, by_key, days, cfg, prior)['rows'] == rows
+    for seed, score_quota in ((17, 8), (43, 0)):
+        with pytest.raises(ContractError, match='registered'):
+            mechanism_slot_task(seed, score_quota, entry, by_key, days, cfg, prior)
+    with pytest.raises(ContractError, match='ready'):
+        mechanism_slot_task(43, 8, dict(entry, status='duplicate'), by_key, days, cfg, prior)
+    with pytest.raises(ContractError, match='digest'):
+        mechanism_slot_task(43, 8, dict(entry, record_sha256='f'*64), by_key, days, cfg, prior)
+
+
+def test_e2_mechanism_training_uses_registered_seed_and_40_anchor_prefix():
+    from night_adapt import e2_mechanism_slot_task
+    from night_train import schedule
+    from source_contract import canonical_hash
+
+    d = [f'val:{i}' for i in range(100)]
+    days = [f'train:{i}' for i in range(2000)]
+    cfg = {'schedule_salt': 20261122, 'flip_probability': .5, 'brightness': [.85, 1.15]}
+    prior = {'d_input_slots': d, 'input_slots': d, 'd_schedule_sha256': canonical_hash(schedule(43, days, d))}
+    keys = [*d[:40], *[f'val:{i}' for i in range(150, 210)]]
+    rows = [{'key': k, 'group_id': k} for k in keys]
+    by_key = {r['key']: r for r in rows}
+    steps = [{'key': k, 'group_id': k, 'kind': 'representative' if i < 20 else 'diverse'} for i,k in enumerate(keys[40:])]
+    entry = {'status': 'ready', 'params': {'representatives': 20, 'diverse': 40, 'neighbors': 5}, 'keys': keys,
+             'records': rows, 'record_sha256': canonical_hash(rows), 'steps': steps, 'overlap_with_D': 40, 'overlap_with_first': 40}
+    task = e2_mechanism_slot_task(43, 20, entry, by_key, days, cfg, prior)
+    assert task['rows'] == rows and task['slots']['input_slots'][:40] == d[:40]
+    for seed, n in ((17,20), (43,30)):
+        with pytest.raises(ContractError, match='registered'):
+            e2_mechanism_slot_task(seed, n, entry, by_key, days, cfg, prior)
+    with pytest.raises(ContractError, match='ready'):
+        e2_mechanism_slot_task(43, 20, dict(entry, status='duplicate'), by_key, days, cfg, prior)

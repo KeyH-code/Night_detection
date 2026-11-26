@@ -13,6 +13,81 @@ sys.path.insert(0, str(SCRIPTS))
 from source_contract import ContractError, canonical_hash, sha256, write_json
 
 
+def test_e2_mechanism_requires_exact_phases_and_excludes_every_anchor_group():
+    from night_strategy import e2_mechanism_rows
+
+    d = [f'd:{i}' for i in range(100)]
+    keys = [*d[:40], *[f'k:{i}' for i in range(60)]]
+    by_key = {k: {'key': k, 'group_id': k} for k in keys}
+    steps = [{'key': k, 'group_id': k, 'kind': 'representative' if i < 40 else 'diverse'}
+             for i,k in enumerate(keys[40:])]
+    pick = {'keys': keys, 'steps': steps}
+    assert e2_mechanism_rows(40, d, pick, by_key) == list(by_key.values())
+    with pytest.raises(ContractError, match='phase'):
+        e2_mechanism_rows(20, d, pick, by_key)
+    by_key[keys[-1]] = {'key': keys[-1], 'group_id': d[-61]}
+    with pytest.raises(ContractError, match='risk group'):
+        e2_mechanism_rows(40, d, pick, by_key)
+
+
+def test_e2_mechanism_reference_representative_prefix_is_stable():
+    from night_strategy import e2_representative_prefix
+
+    reference = [f'a:{i}' for i in range(30)]
+    e2_representative_prefix(reference, reference[:20])
+    e2_representative_prefix(reference, [*reference, 'a:new'])
+    with pytest.raises(ContractError, match='representative prefix'):
+        e2_representative_prefix(reference, [*reference[1:21]])
+
+
+def test_e1_mechanism_score_phase_ignores_distance_and_finishes_before_diversity():
+    from night_strategy import rank_e1
+
+    keys = ['anchor', 'a', 'b', 'c', *[f'k{i}' for i in range(8)]]
+    z = np.eye(len(keys))
+    z[1] = z[0]  # The highest-scoring image is identical to the anchor in feature space.
+    u = np.zeros((len(keys), 5))
+    u[1:4, 0] = [.9, .8, .7]
+    for i in range(1, 5):
+        u[2+2*i:4+2*i, i] = [.9, .8]
+    legacy = rank_e1(keys, z, u, ['anchor'], quota=2)
+    diverse = rank_e1(keys, z, u, ['anchor'], quota=2, score_quota=0)
+    mixed = rank_e1(keys, z, u, ['anchor'], quota=2, score_quota=1)
+    scoring = rank_e1(keys, z, u, ['anchor'], quota=2, score_quota=2)
+    assert diverse['keys'] == legacy['keys'] and diverse['keys'][1] == 'b'
+    assert mixed['keys'][1] == scoring['keys'][1] == 'a'
+    assert [s['stage'] for s in mixed['steps']] == ['score']*5+['diversity']*5
+    assert [s['class_id'] for s in mixed['steps']] == list(range(5))*2
+
+
+def test_e1_mechanism_reports_consumed_class_quota_instead_of_using_fallback():
+    from night_strategy import MechanismQuotaError, rank_e1
+
+    keys = [f'k{i:02}' for i in range(12)]
+    u = np.zeros((12, 5))
+    u[1:3, :2] = [[.9, .9], [.7, .7]]
+    for i in range(2, 5):
+        u[(i-2)*3+3:(i-2)*3+6, i] = [.9, .8, .7]
+    legacy = rank_e1(keys, np.eye(12), u, keys[:1], quota=2)
+    assert sum(legacy['shortfalls']) == 2
+    with pytest.raises(MechanismQuotaError, match='score.*class 0'):
+        rank_e1(keys, np.eye(12), u, keys[:1], quota=2, score_quota=2)
+
+
+def test_e1_mechanism_rejects_records_in_wrong_stage_order():
+    from night_strategy import mechanism_rows
+
+    keys = [f'k{i:03}' for i in range(100)]
+    by_key = {k: {'key': k} for k in keys}
+    steps = [{'key': k, 'class_id': i % 5, 'stage': 'score' if i < 40 else 'diversity'}
+             for i,k in enumerate(keys[20:])]
+    pick = {'keys': keys, 'steps': steps, 'per_class': [16]*5, 'shortfalls': [0]*5}
+    assert mechanism_rows(8, keys[:20], pick, by_key) == list(by_key.values())
+    steps[39]['stage'] = 'diversity'
+    with pytest.raises(ContractError, match='phase'):
+        mechanism_rows(8, keys[:20], pick, by_key)
+
+
 @pytest.mark.parametrize('random_count,e1,e2', [(20, 16, 40), (40, 12, 30), (60, 8, 20)])
 def test_ratio_changes_only_the_number_of_new_picks(random_count, e1, e2):
     from night_strategy import ratio_parameters

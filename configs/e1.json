@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "seed": 43,
+  "random_count": 20,
+  "score_quotas": [16, 8],
+  "strategy_sha256": "c63649e68362c6c7f82ef2dcf2ae724ddb7c2515bfc9e5332969d7d51c230398",
+  "pair_sha256": "7ecab00157b3e265097a8502e41254c3e00010459e9d79584001ac9bb11e901e",
+  "first_runs_sha256": {"e1": "b983a9ebe87fcde3f7847cd1334b7892045f3f62754f0e846a2cd4eed580add8"}
+}

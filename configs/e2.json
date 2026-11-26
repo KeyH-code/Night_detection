@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "seed": 43,
+  "random_count": 40,
+  "representatives": [40, 20],
+  "strategy_sha256": "c63649e68362c6c7f82ef2dcf2ae724ddb7c2515bfc9e5332969d7d51c230398",
+  "pair_sha256": "7ecab00157b3e265097a8502e41254c3e00010459e9d79584001ac9bb11e901e",
+  "ratio_sha256": "182de45bdef0e5ef78005d6b4436ce21e94304aa710d0ed556c767b4cbfc324a",
+  "ratio_pool_sha256": "64323e8d55acb338c63dd2fc318e3213341d7ae830107f73ca77f0e112fbf715",
+  "first_run_sha256": "d55161434ce069894b674f77526a4a0732c320d1f6f6ed26a17f5cc1abdc0048"
+}

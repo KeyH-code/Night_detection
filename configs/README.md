@@ -82,6 +82,26 @@ E2 使用 `--arm e2` 和新 `runs/e2_NNN`。在同一台设备上按 E1→E2 顺
 .venv-train/Scripts/python.exe -B scripts/night_adapt.py ratio --protocol-sha256 '<ratio.json SHA-256>' --pool-run runs/pool_NNN --pool-sha256 '<名单 manifest.json SHA-256>' --arm e1 --random-count 40 --scratch '<项目外任务目录>' --output runs/e1_NNN
 ```
 
+### E1 机制实验
+
+[`e1.json`](e1.json) 锁定 [seed 43 首轮](../specs/s6/e1.md) 与 20 张随机锚。`mechanism` 选样只复用封存特征和 E1 分数；`mechanism-align` 只读核验已封存名单和 D 槽位。训练的 `--score-quota` 指每类分数优先名额，仅接受 16 或 8；缺额、重复集合或失败的名单不提供训练入口。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_strategy.py mechanism --protocol-sha256 '<e1.json SHA-256>' --scratch '<同卷项目外任务目录>' --output runs/pool_NNN
+.venv-train/Scripts/python.exe -B scripts/night_adapt.py mechanism-align --protocol-sha256 '<e1.json SHA-256>' --pool-run runs/pool_NNN --pool-sha256 '<名单 manifest.json SHA-256>'
+.venv-train/Scripts/python.exe -B scripts/night_adapt.py mechanism --protocol-sha256 '<e1.json SHA-256>' --pool-run runs/pool_NNN --pool-sha256 '<名单 manifest.json SHA-256>' --score-quota 16 --scratch '<项目外任务目录>' --output runs/e1_NNN
+```
+
+### E2 机制实验
+
+[`e2.json`](e2.json) 锁定 [seed 43 首轮](../specs/s6/e2.md)、40 张随机锚及 `30/30` 参照身份。重放用参照 run 的 E2 槽位收据核对有序名单，不打开混合臂名单或 E1 分数。`e2-mechanism-align` 只读核验名单和 D 槽位；正式训练 `--representatives` 只接受 40 或 20。
+
+```powershell
+.venv-train/Scripts/python.exe -B scripts/night_strategy.py e2-mechanism --protocol-sha256 '<e2.json SHA-256>' --scratch '<同卷项目外任务目录>' --output runs/pool_NNN
+.venv-train/Scripts/python.exe -B scripts/night_adapt.py e2-mechanism-align --protocol-sha256 '<e2.json SHA-256>' --pool-run runs/pool_NNN --pool-sha256 '<名单 manifest.json SHA-256>'
+.venv-train/Scripts/python.exe -B scripts/night_adapt.py e2-mechanism --protocol-sha256 '<e2.json SHA-256>' --pool-run runs/pool_NNN --pool-sha256 '<名单 manifest.json SHA-256>' --representatives 40 --scratch '<项目外任务目录>' --output runs/e2_NNN
+```
+
 ### 分类排序适配
 
 [`rank.json`](rank.json) 锁定[低误报排序实验](../specs/s6/rank.md)的亲本清单、种子、白天回放和拟合参数。入口只使用封存 E1 的对应百图及其原白天训练顺序，不接受任意数据目录，开发评价使用合规的原生 640 和行人多视图。

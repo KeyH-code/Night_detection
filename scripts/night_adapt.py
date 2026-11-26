@@ -90,8 +90,8 @@ def _day_keys(entry):
     return days
 
 
-def alignment(cfg, old):
-    """Check all six arms against observed D schedules before touching a label."""
+def alignment(cfg, old, *, arms=ARMS, seeds=SEEDS):
+    """Check requested schedules against observed D before touching a label."""
     folder = ROOT/'runs/d_001'
     seal = read_sealed_json(folder, 'manifest.json', cfg['d_manifest_sha256'], [])
     identity = _json(folder, seal, 'run.json')
@@ -106,15 +106,16 @@ def alignment(cfg, old):
     pool = read_sealed_json(train.NIGHT, POOL_MANIFEST, images_sha, [])
     inventory = {r['key']: r for r in _records(pool, POOL, 994, images_only=True)}
     draws = {}
-    for arm, (name, rel) in POOLS.items():
+    for arm in ('d', *arms):
+        name, rel = POOLS[arm]
         parent = ROOT/'runs'/name
         m = read_sealed_json(parent, 'manifest.json', cfg['pool_manifest_sha256'][arm], [])
         check_equal('pool sealed', 'sealed', m['status'])
         if arm == 'd':
             check_equal('frozen D list hash', old['random_sha256'], m['files'][rel]['sha256'])
         draws[arm] = _json(parent, m, rel)
-    tasks = {arm: {} for arm in ARMS}
-    for seed in SEEDS:
+    tasks = {arm: {} for arm in arms}
+    for seed in seeds:
         d_rows = draw_records('d', seed, draws['d'], images_sha, inventory)
         d = [r['key'] for r in d_rows]
         d_plan = _schedule(seed, days, d, old)
@@ -125,7 +126,7 @@ def alignment(cfg, old):
         check_equal('D observed microbatch order', rec['microbatches'], [[a[0], b[0]] for a, b in d_plan])
         check_equal('D observed day replay and night inventory', (inputs['source_keys'], [r['key'] for r in inputs['night']]),
                     ([a[0] for a, _ in d_plan], d))
-        for arm in ARMS:
+        for arm in arms:
             rows = draw_records(arm, seed, draws[arm], images_sha, inventory)
             picked = [r['key'] for r in rows]
             slots = aligned_slots(d, picked)
@@ -195,6 +196,132 @@ def ratio_alignment(cfg, old, ratio, ratio_sha, pool, pool_sha):
             check_equal('ratio actual D overlap', task['slots']['common_images'], pick['overlap_with_D'])
             tasks[arm, r] = task
     return tasks, protocol, identity
+
+
+def _mechanism_slots(seed, random_count, rows, entry, days, old, previous):
+    check_equal('mechanism image-only identities and digest', (rows, canonical_hash(rows)), (entry['records'], entry['record_sha256']))
+    task = ratio_slot_task(seed, random_count, days, rows, old, previous)
+    check_equal('mechanism actual D overlap', task['slots']['common_images'], entry['overlap_with_D'])
+    first = {key: i for i,key in enumerate(previous['input_slots'])}
+    shared = {key for key in task['slots']['input_slots'] if key in first}
+    d = set(previous['d_input_slots'])
+    check_equal('mechanism overlap with reference', len(shared), entry['overlap_with_first'])
+    task['slots']['common_non_d_slot_changes_vs_first'] = sum(key in shared and key not in d and first[key] != i
+                                                             for i,key in enumerate(task['slots']['input_slots']))
+    return task
+
+
+def mechanism_slot_task(seed, score_quota, entry, inventory, days, old, previous):
+    from night_strategy import mechanism_rows
+
+    if seed != 43 or type(score_quota) is not int or score_quota not in (16, 8):
+        raise ContractError('Expected registered E1 mechanism seed and new quota')
+    check_equal('ready E1 mechanism arm', 'ready', entry['status'])
+    check_equal('E1 mechanism rank parameters', {'shortlist': 64, 'quota': 16, 'score_quota': score_quota}, entry['params'])
+    rows = mechanism_rows(score_quota, previous['d_input_slots'][:20], entry, inventory)
+    task = _mechanism_slots(seed, 20, rows, entry, days, old, previous)
+    task['slots']['score_quota'] = score_quota
+    return task
+
+
+def mechanism_alignment(cfg, old, mechanism, protocol_sha, pool, pool_sha):
+    from night_strategy import mechanism_rows
+
+    pool = Path(pool).absolute()
+    if pool.parent != ROOT/'runs' or not re.fullmatch(r'pool_\d{3}', pool.name):
+        raise ContractError('Expected mechanism selection seal in runs/pool_NNN')
+    seal = read_sealed_json(pool, 'manifest.json', pool_sha, [])
+    check_equal('mechanism list seal', ('sealed', 'E1 mechanism selection only', protocol_sha),
+                (seal['status'], seal['scope'], seal['files']['e1.json']['sha256']))
+    receipt, picked = (_json(pool, seal, f'{k}.json') for k in ('run', 'lists'))
+    check_equal('mechanism input receipts', ('sealed_e1_mechanism_selection', protocol_sha, True, ['features.npz', 'scores.npz'],
+                                             cfg['pool_manifest_sha256']['e1']),
+                (receipt['status'], receipt['protocol_sha256'], receipt['first_replay_exact'], receipt['worker_reads'],
+                 receipt['pool_manifest_sha256']))
+    if any(receipt[k] for k in ('labels_read', 'prediction_performed', 'training_performed')):
+        raise ContractError('Mechanism selection violated payload isolation')
+    seed = mechanism['seed']
+    previous, protocol, identity = alignment(cfg, old, arms=('e1',), seeds=(seed,))
+    prior = previous['e1'][seed]['slots']
+    digest = protocol['data']['pool_images_sha256']
+    arms = picked['arms']
+    check_equal('mechanism list source', ('night_pool_e1_mechanism', seed, digest, {'0', '16', '8'}),
+                (picked['purpose'], picked['seed'], picked['images_sha256'], set(arms)))
+    manifest = read_sealed_json(train.NIGHT, POOL_MANIFEST, digest, [])
+    by_key = {r['key']: r for r in _records(manifest, POOL, 994, images_only=True)}
+    original = mechanism_rows(0, prior['d_input_slots'][:20], arms['0'], by_key)
+    check_equal('mechanism first endpoint', ('reference', prior['selection_order'], prior['selection_sha256']),
+                (arms['0']['status'], [r['key'] for r in original], canonical_hash(original)))
+    days = _day_keys(identity['source_train'])
+    tasks, statuses = {}, {}
+    for q in mechanism['score_quotas']:
+        entry = arms[str(q)]
+        statuses[q] = {k: entry[k] for k in ('status', 'reason', 'duplicate_of') if k in entry}
+        if entry['status'] == 'ready':
+            tasks[q] = mechanism_slot_task(seed, q, entry, by_key, days, old, prior)
+            statuses[q].update(schedule_sha256=tasks[q]['slots']['schedule_sha256'])
+        elif entry['status'] not in ('duplicate', 'quota_failure'):
+            raise ContractError('Unknown mechanism selection status')
+    return tasks, statuses, protocol, identity
+
+
+def e2_mechanism_slot_task(seed, representatives, entry, inventory, days, old, previous):
+    from night_strategy import e2_mechanism_rows
+
+    if seed != 43 or type(representatives) is not int or representatives not in (40, 20):
+        raise ContractError('Expected registered E2 mechanism seed and new quota')
+    check_equal('ready E2 mechanism arm', 'ready', entry['status'])
+    check_equal('E2 mechanism rank parameters', {'representatives': representatives, 'diverse': 60-representatives, 'neighbors': 5}, entry['params'])
+    rows = e2_mechanism_rows(representatives, previous['d_input_slots'], entry, inventory)
+    task = _mechanism_slots(seed, 40, rows, entry, days, old, previous)
+    task['slots']['representatives'] = representatives
+    return task
+
+
+def e2_mechanism_alignment(cfg, old, mechanism, protocol_sha, pool, pool_sha):
+    from night_strategy import e2_mechanism_rows, e2_reference_receipt, e2_representative_prefix
+
+    pool = Path(pool).absolute()
+    if pool.parent != ROOT/'runs' or not re.fullmatch(r'pool_\d{3}', pool.name):
+        raise ContractError('Expected E2 mechanism selection seal in runs/pool_NNN')
+    seal = read_sealed_json(pool, 'manifest.json', pool_sha, [])
+    check_equal('E2 mechanism list seal', ('sealed', 'E2 mechanism selection only', protocol_sha),
+                (seal['status'], seal['scope'], seal['files']['e2.json']['sha256']))
+    receipt, picked = (_json(pool, seal, f'{k}.json') for k in ('run', 'lists'))
+    check_equal('E2 mechanism input receipt', ('sealed_e2_mechanism_selection', protocol_sha, True, ['features.npz'],
+                                               cfg['pool_manifest_sha256']['e1']),
+                (receipt['status'], receipt['protocol_sha256'], receipt['first_replay_exact'], receipt['worker_reads'],
+                 receipt['pool_manifest_sha256']))
+    if any(receipt[k] for k in ('labels_read', 'e1_scores_read', 'prediction_performed', 'training_performed')):
+        raise ContractError('E2 mechanism selection violated feature-only payload isolation')
+    seed = mechanism['seed']
+    previous, protocol, identity = alignment(cfg, old, arms=('e2',), seeds=(seed,))
+    _, _, _, prior = e2_reference_receipt(mechanism, [])
+    frozen_d = previous['e2'][seed]['slots']
+    check_equal('E2 reference exact observed D anchors and schedule', (frozen_d['d_input_slots'], frozen_d['d_schedule_sha256'],
+                                                                    frozen_d['d_input_slots'][:40]),
+                (prior['d_input_slots'], prior['d_schedule_sha256'], prior['anchors']))
+    digest = protocol['data']['pool_images_sha256']
+    arms = picked['arms']
+    check_equal('E2 mechanism list source', ('night_pool_e2_mechanism', seed, digest, {'30', '40', '20'}),
+                (picked['purpose'], picked['seed'], picked['images_sha256'], set(arms)))
+    manifest = read_sealed_json(train.NIGHT, POOL_MANIFEST, digest, [])
+    by_key = {r['key']: r for r in _records(manifest, POOL, 994, images_only=True)}
+    original = e2_mechanism_rows(30, prior['d_input_slots'], arms['30'], by_key)
+    check_equal('E2 mechanism 30/30 reference', ('reference', prior['selection_order'], prior['selection_sha256']),
+                (arms['30']['status'], [r['key'] for r in original], canonical_hash(original)))
+    days = _day_keys(identity['source_train'])
+    tasks, statuses = {}, {}
+    for n in mechanism['representatives']:
+        entry = arms[str(n)]
+        statuses[n] = {k: entry[k] for k in ('status', 'duplicate_of')}
+        e2_representative_prefix(prior['selection_order'][40:70], entry['keys'][40:40+n])
+        if entry['status'] == 'ready':
+            tasks[n] = e2_mechanism_slot_task(seed, n, entry, by_key, days, old, prior)
+            statuses[n].update(schedule_sha256=tasks[n]['slots']['schedule_sha256'])
+        elif entry['status'] != 'duplicate':
+            raise ContractError('Unknown E2 mechanism selection status')
+    return tasks, statuses, protocol, identity
 
 
 def granted_rows(box, arm, seed, digest):
@@ -329,6 +456,19 @@ def _first_ratio_reference(arm, seed, ratio, a_sha, night):
     return night_rows, night_metrics['workpoints'], assessment
 
 
+def _first_e2_mechanism_reference(mechanism, a_sha, night):
+    from night_strategy import e2_reference_receipt
+
+    folder, seal, receipt, _ = e2_reference_receipt(mechanism, [])
+    check_equal('E2 30/30 reference evaluation identity', (a_sha, night['manifest'], False),
+                (receipt['a_sha256'], receipt['night_dev'], receipt['final_test_executed']))
+    dev = '43/dev'
+    rows = accept.sealed_objects(folder, seal, f'{dev}/night/objects.jsonl.gz', 'night_dev',
+                                 {r['key']: r for r in night['records']}, [])
+    points = _json(folder, seal, f'{dev}/night/metrics.json')['workpoints']
+    return rows, points, _json(folder, seal, f'{dev}/evaluation.json')['assessment']
+
+
 def _ratio_comparison(seed, pairs, assessments, baseline, first, policy):
     result = _comparison(pairs, assessments, baseline, policy)
     n_rows, n_points = pairs[seed][2:]
@@ -350,16 +490,19 @@ def _ratio_comparison(seed, pairs, assessments, baseline, first, policy):
     return result
 
 
-def run_arm(arm, out, scratch, raw, cfg, old, tasks, protocol, d_identity, protocol_sha, *, ratio=None):
+def run_arm(arm, out, scratch, raw, cfg, old, tasks, protocol, d_identity, protocol_sha, *, ratio=None, mechanism=None):
     from seed_eval import probe_gpu
     from night_run import CODE
 
     started = time.monotonic()
     until = started + 60*cfg['max_minutes_per_arm']
+    if mechanism is not None and (ratio is not None or arm not in ARMS or mechanism['seed'] != 43):
+        raise ContractError('Expected only an approved seed-43 mechanism study')
+    study = mechanism if mechanism is not None else ratio
     check_equal('frozen A training bytes', d_identity['A_sha256'], sha256(train.CHECKPOINT))
     env = {k: version(k) for k in train.LIBS}
     check_equal('locked environment', d_identity['versions'], env)
-    seeds = list(SEEDS) if ratio is None else [ratio['seed']]
+    seeds = list(SEEDS) if study is None else [study['seed']]
     check_equal('locked NumPy schedule already replayed', seeds, list(tasks))
     gpu = probe_gpu()
     day = train.verify_subset(train.SOURCE, protocol['data']['source_ready_sha256'], 'source_train')
@@ -368,7 +511,9 @@ def run_arm(arm, out, scratch, raw, cfg, old, tasks, protocol, d_identity, proto
     for split, result in (('source_train', day), ('source_dev', dev), ('night_dev', night)):
         check_equal(f'D {split} identity', d_identity[split], result['manifest'])
     policy, reference, baseline, d_pairs, a_day = _reference(cfg, protocol, dev, night, seeds)
-    first = None if ratio is None else _first_ratio_reference(arm, seeds[0], ratio, d_identity['A_sha256'], night)
+    first = None if study is None else (_first_e2_mechanism_reference(mechanism, d_identity['A_sha256'], night)
+                                      if mechanism is not None and arm == 'e2' else
+                                      _first_ratio_reference(arm, seeds[0], study, d_identity['A_sha256'], night))
     day_by = {r['key']: r for r in day['records']}
     dev_groups = {r['group_id'] for r in dev['records']+night['records']}
     for task in tasks.values():
@@ -376,7 +521,7 @@ def run_arm(arm, out, scratch, raw, cfg, old, tasks, protocol, d_identity, proto
         check_equal('gradient and dev risk group separation', set(), gradient_groups & dev_groups)
     out.mkdir(exist_ok=False)
     code_names = ('night_adapt.py', 'night_accept.py', 'night_train.py', *CODE, 'source_policy.py', 'tricycle_fusion.py')
-    if ratio is not None:
+    if study is not None:
         code_names += ('night_strategy.py', 'night_select.py')
     code = {name: sha256(ROOT/'scripts'/name) for name in code_names}
     done, pairs, assessments = [], {}, {}
@@ -388,7 +533,9 @@ def run_arm(arm, out, scratch, raw, cfg, old, tasks, protocol, d_identity, proto
                 'final_test_executed': False, 'code_sha256': code}
     if ratio is not None:
         identity.update(scope='S6 single-seed ratio exploration', ratio=ratio)
-    prep_sha = protocol_sha if ratio is None else ratio['pair_sha256']
+    if mechanism is not None:
+        identity.update(scope=f'S6 {arm.upper()} mechanism exploration', mechanism=mechanism)
+    prep_sha = protocol_sha if study is None else study['pair_sha256']
     try:
         (out/'protocol.json').write_bytes(raw)
         (out/'code/scripts').mkdir(parents=True)
@@ -468,7 +615,7 @@ def run_arm(arm, out, scratch, raw, cfg, old, tasks, protocol, d_identity, proto
                                                           policy, reference, d_pairs[seed], a_day, until)
                 done.append(seed)
                 print(f'{arm} seed {seed} completed: {receipt["seconds"]:.1f}s training + development evaluation', flush=True)
-            result = (_comparison(pairs, assessments, baseline, policy) if ratio is None else
+            result = (_comparison(pairs, assessments, baseline, policy) if study is None else
                       _ratio_comparison(seeds[0], pairs, assessments, baseline, first, policy))
             write_json(out/'comparison.json', result)
             check_equal('frozen A unchanged', d_identity['A_sha256'], sha256(train.CHECKPOINT))
@@ -494,7 +641,8 @@ def _runner_output(arm, arg):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=('align', 'run', 'prepare', 'ratio-align', 'ratio'))
+    parser.add_argument('mode', choices=('align', 'run', 'prepare', 'ratio-align', 'ratio', 'mechanism-align', 'mechanism',
+                                         'e2-mechanism-align', 'e2-mechanism'))
     parser.add_argument('--protocol-sha256', required=True)
     parser.add_argument('--arm', choices=ARMS)
     parser.add_argument('--seed', type=int, choices=SEEDS)
@@ -504,7 +652,46 @@ def main(argv=None):
     parser.add_argument('--pool-run', type=Path)
     parser.add_argument('--pool-sha256')
     parser.add_argument('--random-count', type=int, choices=(40, 60))
+    parser.add_argument('--score-quota', type=int, choices=(16, 8))
+    parser.add_argument('--representatives', type=int, choices=(40, 20))
     a = parser.parse_args(argv)
+    if a.mode in ('mechanism-align', 'mechanism', 'e2-mechanism-align', 'e2-mechanism'):
+        from night_strategy import e2_mechanism_config, mechanism_config
+
+        e2 = a.mode.startswith('e2-')
+        arm = 'e2' if e2 else 'e1'
+        quota, other = (a.representatives, a.score_quota) if e2 else (a.score_quota, a.representatives)
+        if a.pool_run is None or not a.pool_sha256 or any(x is not None for x in (a.arm, a.seed, a.grant_sha256, a.random_count, other)):
+            parser.error(f'{arm} mechanism modes require the sealed selection and use only seed 43')
+        aligning = a.mode.endswith('-align')
+        if aligning and any(x is not None for x in (quota, a.output, a.scratch)):
+            parser.error('mechanism alignment verifies the approved schedules without staging')
+        if not aligning:
+            if any(x is None for x in (quota, a.output, a.scratch)):
+                parser.error(f'{arm} mechanism requires its quota, new output and external scratch')
+            out, scratch = _runner_output(arm, a.output), a.scratch.absolute()
+            if not scratch.is_dir() or scratch.resolve() != scratch or scratch.is_relative_to(ROOT):
+                parser.error('scratch must be an existing clean external path')
+            _no_reparse(scratch)
+        raw, mechanism = (e2_mechanism_config if e2 else mechanism_config)(a.protocol_sha256, [])
+        _, cfg, old = _config(mechanism['pair_sha256'])
+        align = e2_mechanism_alignment if e2 else mechanism_alignment
+        tasks, statuses, protocol, d_identity = align(cfg, old, mechanism, a.protocol_sha256, a.pool_run, a.pool_sha256)
+        if aligning:
+            print(json.dumps(statuses, indent=2), flush=True)
+            return
+        if quota not in tasks:
+            raise ContractError(f'{arm} mechanism selection was not ready: {statuses[quota]}')
+        quota_field = 'representative_count' if e2 else 'score_quota'
+        mechanism = dict(mechanism, pool_run=a.pool_run.absolute().relative_to(ROOT).as_posix(),
+                         pool_sha256=a.pool_sha256)
+        mechanism[quota_field] = quota
+        total, units = (60, 'representative/diverse') if e2 else (16, 'score/diversity')
+        print(f'{arm.upper()} mechanism slots verified; start seed 43, {quota}/{total-quota} {units}.', flush=True)
+        run_arm(arm, out, scratch, raw, cfg, old, {43: tasks[quota]}, protocol, d_identity, a.protocol_sha256, mechanism=mechanism)
+        return
+    if a.score_quota is not None or a.representatives is not None:
+        parser.error('mechanism quotas apply only to their corresponding mechanism mode')
     if a.mode in ('ratio-align', 'ratio'):
         from night_strategy import ratio_config
 
