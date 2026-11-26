@@ -1426,13 +1426,15 @@ AP 的输入是对每类按原置信度顺序排列的十个 IoU 匹配标记，
 
 ## 从原图重跑开发集评估
 
-准备 [SODA10M 官方有标注 train/val](https://soda-2d.github.io/download.html) 并解压。`--soda-root` 指向包含 `annotations/`、`train/` 和 `val/` 的目录。[开发集索引](../configs/replay_dev.json) 保存文件名、图像和归一化标签的 SHA-256，以及匿名组号，不随仓库提供原始图像或标签。脚本从官方标注重建开发集标签，逐项匹配冻结哈希，只把 500 张白天及 331 张夜间开发图放入临时评估目录。最终留出、训练图片及候选池均不进入模型。
+从 [v0.2.0 Release](https://github.com/KeyH-code/Night_detection/releases/tag/v0.2.0) 下载 `soda10m-dev-831.zip`，并用同页的 `SHA256SUMS` 校验文件。ZIP 可直接传入 `--dev-archive`。包内是 500 张白天、331 张夜间开发图和一一配对的 YOLO 标签。标签沿用项目对 SODA10M 原始标注的裁剪、归一化和类别映射。数据来源见 [SODA10M 官方项目](https://soda-2d.github.io/)。
 
-输入核验只用 [数据环境](../environment/README.md)。确认目录正确后，可先运行如下命令。
+[开发集索引](../configs/replay_dev.json) 锁定图像和标签的 SHA-256 及匿名组号。脚本逐项核验，只将两组开发数据放入临时评估目录。也可以从 [SODA10M 官方有标注 train/val](https://soda-2d.github.io/download.html) 自行重建，使用 `--soda-root` 指定含 `annotations/`、`train/`、`val/` 的解压目录。
+
+输入核验使用 [数据环境](../environment/README.md)，无需启动模型。
 
 ```powershell
-$raw = 'D:\SODA10M\SSLAD-2D\labeled'
-python -B scripts/replay_dev.py --soda-root $raw --scratch $env:TEMP --check-inputs
+$dev = 'D:\datasets\soda10m-dev-831.zip'
+python -B scripts/replay_dev.py --dev-archive $dev --scratch $env:TEMP --check-inputs
 ```
 
 正式重跑使用 [项目锁定的 CUDA 环境](../environment/README.md)、符合显存检查的单张 NVIDIA GPU 和对应 checkpoint。启动时检查至少有 4 GiB 空闲显存，且 GPU 利用率不高于 35%。新入口复用原评估的 FP16、整景多尺度及镜像融合，保留五类的评价口径。[v0.1.0 Release](https://github.com/KeyH-code/Night_detection/releases/tag/v0.1.0) 提供三份权重及 `SHA256SUMS`，评估入口也会校验每个 checkpoint 的 SHA-256。白天源模型和 300 图夜间适配模型可用来对同一张图运行 `demo.py --weights` 作直观比较。340 图定向补样权重用于复核 README 的两个尾类缺口，省略时只复查 300 图主结果。用下载文件的路径替换下列变量。
@@ -1443,7 +1445,7 @@ $source = 'D:\weights\source-day.pt'
 $adapted = 'D:\weights\adapted-night-300.pt'
 $supplement = 'D:\weights\targeted-night-340.pt'
 New-Item -ItemType Directory -Force artifacts/evaluation | Out-Null
-& $evalPython -B scripts/replay_dev.py --soda-root $raw --scratch $env:TEMP `
+& $evalPython -B scripts/replay_dev.py --dev-archive $dev --scratch $env:TEMP `
   --source-weights $source --adapted-weights $adapted --supplement-weights $supplement `
   --output artifacts/evaluation/dev_001.json
 ```

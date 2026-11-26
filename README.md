@@ -77,7 +77,7 @@ if ((Get-FileHash weights/yolo11n.pt).Hash -ne '0ebbc80d4a7680d14987a577cd21342b
 - **直接阅读。** [数据划分](reports/data.md) · [白天源模型](reports/a.md) · [夜间主报告与复查索引](reports/night.md#复查) · [项目阶段](plan.md#阶段)。
 - **在 CPU 上复算本页数字。** 在 Python 3.12 环境执行 `python -m pip install -r environment/data.txt`，再运行 `python -B scripts/verify_results.py`。命令从归档的统计输入重算白天 AP 变化、300 图夜间恢复差值及 340 图定向补样的剩余缺口。成功时打印 `PASS`，并列出各类召回和误报数。只需仓库里的证据包和依赖。[证据来源及范围](reports/night.md#公开数字复算)
 - **运行无需数据的回归。** 在测试环境执行 `python -m pip install -r environment/data.txt pytest==9.0.2`，再运行 `python -B -m pytest tests/data -q -p no:cacheprovider`。训练和诊断回归的环境与命令见 [环境说明](environment/README.md)。
-- **从原图重跑开发集评估。** 从官方获取 SODA10M 有标注 train/val，准备对应的项目 checkpoint，在 CUDA 环境运行 `python -B scripts/replay_dev.py`。该入口重建固定的 500 张白天和 331 张夜间开发图，在锁定的多视图协议下重新生成预测并核对 README 指标。[下载项目权重](https://github.com/KeyH-code/Night_detection/releases/tag/v0.1.0) · [输入检查及评估命令](reports/night.md#从原图重跑开发集评估)
+- **从原图重跑开发集评估。** 下载 [831 张开发图和对应标签](https://github.com/KeyH-code/Night_detection/releases/tag/v0.2.0) 及对应权重，在 CUDA 环境运行 `python -B scripts/replay_dev.py --dev-archive <开发集 ZIP>`。脚本在固定的 500 张白天和 331 张夜间开发图上重新生成预测并核对 README 指标。也支持从 SODA10M 官方 train/val 在本地重建同一划分。[下载项目权重](https://github.com/KeyH-code/Night_detection/releases/tag/v0.1.0) · [输入检查及评估命令](reports/night.md#从原图重跑开发集评估)
 - **检查完整实验封存。** 历史文档里的 `runs/` 与 `data/` 路径指向本地实验材料，可用于复查训练记录、父对照及当时的代码身份。[完整复查条件](reports/night.md#复查)
 
 ## 许可

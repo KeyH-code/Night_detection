@@ -10,10 +10,11 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+from zipfile import BadZipFile, ZipFile
 
 import night_accept as accept
 from make_splits import label_bytes
-from night_contract import _path, read_sealed_json
+from night_contract import _parts, _path, read_sealed_json
 from normalize import clip_box
 from source_contract import ContractError, NAMES, check_equal, read_json, sha256, write_json
 from verify_results import EVIDENCE, night_results, percent, verify
@@ -22,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 INDEX = 'configs/replay_dev.json'
 INDEX_SHA256 = '23f15adfaa535ff58ea154eab41a5028852a94fd776140486a2e6689fae7d02d'
 DEV_SPLITS = {'source_dev': ('train', 500), 'night_dev': ('val', 331)}
+DEV_ARCHIVE_BYTES = 258_427_840
 
 
 def stage_dev(raw, destination, purpose, split, mapping):
@@ -70,11 +72,76 @@ def stage_dev(raw, destination, purpose, split, mapping):
                         'image': f'images/{purpose}/{name}', 'label': f'labels/{purpose}/{label_name}',
                         'image_sha256': image_hash, 'label_sha256': label_hash})
 
+    return staged_dataset(destination, purpose, records)
+
+
+def staged_dataset(destination, purpose, records):
     data = destination / 'dataset.yaml'
     selected = f'images/{purpose}'
     write_json(data, {'path': destination.as_posix(), 'train': selected, 'val': selected,
                       'names': NAMES, 'nc': len(NAMES)})
     return {'root': destination, 'purpose': purpose, 'records': records}, data
+
+
+def stage_archive(archive, destination, splits):
+    """Copy only approved ZIP members and verify the same image and label bytes as the raw route."""
+    from PIL import Image
+
+    members = archive.infolist()
+    names = {member.filename for member in members}
+    expected_count = 2 * sum(count for _, count in DEV_SPLITS.values())
+    check_equal('unique development archive members', expected_count, len(members))
+    if len(names) != expected_count:
+        raise ContractError('Duplicate development archive member')
+    check_equal('unpacked development archive bytes', DEV_ARCHIVE_BYTES,
+                sum(member.file_size for member in members))
+
+    approved = set()
+    plans = {}
+    for purpose, (_, count) in DEV_SPLITS.items():
+        image_prefix = f'images/{purpose}/'
+        samples = splits[purpose]['samples']
+        check_equal(f'{purpose} index sample count', count, len(samples))
+        selected = {}
+        for image_path in sorted(name for name in names if name.startswith(image_prefix)):
+            name = image_path.removeprefix(image_prefix)
+            if len(_parts(name)) != 1 or Path(name).suffix.lower() != '.jpg':
+                raise ContractError(f'Invalid {purpose} image member')
+            key = hashlib.sha256(name.encode('utf-8')).hexdigest()
+            if key not in samples:
+                raise ContractError(f'Unapproved {purpose} image member')
+            label_path = f'labels/{purpose}/{Path(name).with_suffix(".txt").name}'
+            if label_path not in names:
+                raise ContractError(f'Missing {purpose} label member')
+            selected[key] = image_path, label_path
+            approved.update((image_path, label_path))
+        if selected.keys() != samples.keys():
+            raise ContractError(f'Incomplete {purpose} development membership')
+        plans[purpose] = selected
+    if approved != names:
+        raise ContractError('Archive contains a member outside the two approved development splits')
+
+    staged = {}
+    for purpose, selected in plans.items():
+        dest = destination / purpose
+        (dest / 'images' / purpose).mkdir(parents=True)
+        (dest / 'labels' / purpose).mkdir(parents=True)
+        records = []
+        for key, (image_path, label_path) in selected.items():
+            image_hash, label_hash, group = splits[purpose]['samples'][key]
+            for kind, member, expected in (('image', image_path, image_hash),
+                                           ('label', label_path, label_hash)):
+                target = dest / member
+                with archive.open(member) as source, target.open('xb') as output:
+                    shutil.copyfileobj(source, output)
+                check_equal(f'{purpose} {kind} SHA-256', expected, sha256(target))
+            with Image.open(dest / image_path) as image:
+                width, height = image.size
+            records.append({'key': key, 'purpose': purpose, 'group_id': f'{group:04d}',
+                            'width': width, 'height': height, 'image': image_path, 'label': label_path,
+                            'image_sha256': image_hash, 'label_sha256': label_hash})
+        staged[purpose] = staged_dataset(dest, purpose, records)
+    return staged
 
 
 def capture_metrics(torch, weight, staged, policy, scratch):
@@ -165,7 +232,9 @@ def replay(weights, staged, config, scratch):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--soda-root', required=True, type=Path, help='Official labeled directory with annotations, train and val')
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument('--soda-root', type=Path, help='Official labeled directory with annotations, train and val')
+    inputs.add_argument('--dev-archive', type=Path, help='ZIP of the 831 approved development images and labels')
     parser.add_argument('--scratch', required=True, type=Path, help='Existing temporary directory outside the repository and data')
     parser.add_argument('--source-weights', type=Path)
     parser.add_argument('--adapted-weights', type=Path)
@@ -177,20 +246,19 @@ def main():
         parser.error('--check-inputs does not write a report')
     if not args.check_inputs and not (args.source_weights and args.adapted_weights and args.output):
         parser.error('evaluation requires --source-weights, --adapted-weights and --output')
-    raw, scratch = args.soda_root.resolve(), args.scratch.resolve()
-    if not scratch.is_dir() or scratch.is_relative_to(ROOT) or scratch.is_relative_to(raw):
+    data_input = (args.soda_root or args.dev_archive).resolve()
+    scratch = args.scratch.resolve()
+    if not scratch.is_dir() or scratch.is_relative_to(ROOT) or scratch.is_relative_to(data_input):
         parser.error('--scratch must exist outside the repository and data')
     if args.output is not None:
         output = args.output.resolve()
         if (output.suffix.lower() != '.json' or output.exists() or not output.parent.is_dir()
-                or output.is_relative_to(raw)):
+                or output.is_relative_to(data_input)):
             parser.error('--output must be a new JSON file in an existing directory outside the data')
 
     try:
         config = read_sealed_json(ROOT, INDEX, INDEX_SHA256, [])
         check_equal('index schema', 1, config['schema'])
-        mapping = read_json(ROOT/'configs/soda10m_categories.json')['category_mapping']
-        check_equal('training class order', NAMES, [entry['name'] for entry in mapping])
         with tempfile.TemporaryDirectory(dir=scratch, prefix='replay-dev-') as temporary:
             tmp = Path(temporary)
             weights = {}
@@ -202,8 +270,15 @@ def main():
                     weight = Path(shutil.copyfile(weight, tmp/f'{name}.pt'))
                 check_equal(f'{name} checkpoint SHA-256', config['weights'][name], sha256(weight))
                 weights[name] = weight
-            staged = {purpose: stage_dev(raw, tmp/purpose, purpose, config['splits'][purpose], mapping)
-                      for purpose in DEV_SPLITS}
+            if args.dev_archive:
+                with ZipFile(data_input) as archive:
+                    staged = stage_archive(archive, tmp, config['splits'])
+            else:
+                mapping = read_json(ROOT/'configs/soda10m_categories.json')['category_mapping']
+                check_equal('training class order', NAMES, [entry['name'] for entry in mapping])
+                staged = {purpose: stage_dev(data_input, tmp/purpose, purpose,
+                                             config['splits'][purpose], mapping)
+                          for purpose in DEV_SPLITS}
             print('PASS: verified 500 daytime and 331 nighttime development images and labels.', flush=True)
             if args.check_inputs:
                 return 0
@@ -214,6 +289,7 @@ def main():
             (tmp/'yolo_config_dir'/'Ultralytics').mkdir()
             os.environ.update(YOLO_AUTOINSTALL='false', WANDB_MODE='disabled')
             result = replay(weights, staged, config, tmp)
+            result['input_format'] = 'dev_archive' if args.dev_archive else 'official_tree'
         with output.open('x', encoding='utf-8', newline='\n') as stream:
             json.dump(result, stream, ensure_ascii=False, indent=2, allow_nan=False)
             stream.write('\n')
@@ -222,7 +298,7 @@ def main():
             return 0
         print(f'Evaluation completed with metric differences. Report: {output}')
         return 2
-    except (ContractError, OSError, ValueError) as error:
+    except (BadZipFile, ContractError, OSError, ValueError) as error:
         parser.exit(1, f'{error}\n')
 
 
