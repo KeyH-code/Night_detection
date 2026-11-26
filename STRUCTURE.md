@@ -10,17 +10,17 @@
 | specs/s2/—specs/s10/ | 各阶段开发安排 | plan.md；有独立用途时增加roadmap.md、changemap.md等，职责见下表 | 固定短名；阶段进度看[根计划](plan.md#阶段)，不机械创建空文档 |
 | scripts/ | 活动实现 | 数据、训练、校验、打包入口及共用模块；`gpu.py` 是本机 BitaHub 运维入口，`gpu_queue.py` 接续平台排队和已批准的 scale_003 训练，不随训练包部署 | 小写；必要时下划线；不加临时时间或实例端口 |
 | tests/ | 本机运维回归 | `test_gpu.py`、`test_gpu_queue.py` 覆盖开关机、预算、资源身份、单次排队与产物校验；不随训练包部署 | test_<功能>.py |
-| tests/data/ | 数据回归 | 归档安全、框转换、分组、冻结身份 | test_<功能>.py |
+| tests/data/ | 数据与结果复算回归 | 归档安全、框转换、分组、冻结身份、公开复算、证据完整性与开发评估划分重建 | test_<功能>.py |
 | tests/train/ | 训练回归 | 白名单、选模、续训、资源、运行和发布边界 | test_<功能>.py |
 | tests/train/diagnose/ | 本机诊断和复核器回归 | 原生匹配/导出、工作点、尺寸、风险组区间、审核及固定 R 复核器的裁剪、分组和选轮 | test_<功能>.py；完整 pytest 递归覆盖，训练包顶层 glob 不带入本机回归 |
-| configs/ | 配置 | 类别映射、实验参数、README.md参数说明；`gpu.local.json` 是本机实例、账号和 SSH 绑定，不入 Git 或训练包 | 按功能/实验命名；JSON/YAML；本机绑定用 `.local.json` |
+| configs/ | 配置 | 类别映射、实验参数、开发评估用哈希索引、README.md 参数说明；`gpu.local.json` 是本机实例、账号和 SSH 绑定，不入 Git 或训练包 | 按功能/实验命名；JSON/YAML；本机绑定用 `.local.json` |
 | environment/ | 环境 | 数据依赖、平台锁、安装入口 | 按平台/用途；旧有效锁名保留 |
 | examples/ | 快速运行输入 | 许可清楚、带来源说明的单图，如 城市公交 | <场景>.jpg |
 | data/soda10m/ | 数据 | 下表限定内容 | 数据集/版本/用途分层 |
 | runs/a_001/ | 首训A基线 | 一份原始训练记录、代码/配置/环境快照、权重及清单；不等于最终A已冻结 | 实验名_序号；如 a_001 |
 | runs/a_001_train/ | 固定best的训练集评价 | metrics.json、comparison.csv、run.json、必要日志及评价代码快照；不复制数据/权重 | 关联实验名_用途；原训练清单不改 |
 | `runs/<实验>/`、`runs/<实验>_diag/` | 候选、诊断、对照及冻结证据 | 实际执行后保存配置/代码/环境身份、必要日志、指标、权重及冻结记录；固定权重诊断保存可复查预测/匹配/PR，不复制原权重 | 训练用a_002、d_001等短ID；诊断用`<实验>_diag`；seed写身份/配置；不预建空目录 |
-| reports/ | 结论 | data.md数据报告、a.md源模型报告、night.md夜间基线及后续夜间结果；形成有效结果后维护对应主题报告 | 按主题/实验；不留过程流水 |
+| reports/ | 结论与公开复算证据 | data.md 数据报告、a.md 源模型报告、night.md 夜间报告；evidence.json.gz 存放复算 README 指标所需的统计输入 | 报告按主题命名；证据以对应复算入口为准 |
 | plots/a_001/ | 图表 | 正式日志生成的分项损失、逐类AP等分析图 | loss.png、ap.png；不放页面截图 |
 | plots/a_001_train/ | 对照图 | 固定best的train与已有dev逐类AP对照 | ap.png；由comparison.csv复建 |
 | `plots/<实验或诊断ID>/` | 可复建结果图 | 实际产生的PR、错误、尺寸及配对比较图；引用run中的原始数值 | pr.png、errors.png等短名；不放审核网页截图 |

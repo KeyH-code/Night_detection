@@ -1416,6 +1416,40 @@ GPU 门恢复后，“consensus_002”（本地 `runs/consensus_002/manifest.jso
 
 “配对复算”（本地 `runs/supp_002/comparison.json`）从训练输入／实际曝光、固定始末权重及封存开发预测重建两臂结果、三组差值和原有轨 GT 身份；保留截断与逐类证据复核标记。运行 `scripts/night_paired_replay.py` 可复核。两臂本机训练分别 195.4／186.5 秒，含预检和开发的各臂用时 371.5／411.8 秒；未使用云端。配对清单 SHA `3faa068653292c110ab50fdbbd915ef5d2808b4bfd846f8e917db788eb63be8e`。
 
+## 公开数字复算
+
+`python -B scripts/verify_results.py` 使用 [证据包](evidence.json.gz) 复算 README 的开发集指标。输入来自白天源模型、300 图方案的白天与夜间评价，以及 340 图定向补样方案的夜间评价。四份开发预测与原始封存清单的 SHA-256 已逐一核对。压缩包记录这些来源哈希、协议、300 图名单与对照结果的哈希。解析前，脚本还会校验证据包自身的 SHA-256。
+
+AP 的输入是对每类按原置信度顺序排列的十个 IoU 匹配标记，以及该类真值总数。每个整数的低十位按 0.50 至 0.95 的顺序存放对应的匹配标记。低误报召回从按阈值降序排列的累计 TP、FP 和真值总数重算。白天工作点每类至多 10 个误报，夜间至多 6 个。证据包省去原图、原始标签、检测框、逐图 ID、置信度值及模型权重。
+
+这里复算的是开发集点估计，以及 300 张与 4,000 张的样本数量比例。由原图生成预测、按框重匹配、复算风险组区间、复验选图名单或重跑训练，需要对应的原始实验输入。证据包来自 SODA10M 实验的聚合统计，适用该数据集条款。[SODA10M 条款](https://soda-2d.github.io/about.html#terms_of_use)
+
+## 从原图重跑开发集评估
+
+准备 [SODA10M 官方有标注 train/val](https://soda-2d.github.io/download.html) 并解压。`--soda-root` 指向包含 `annotations/`、`train/` 和 `val/` 的目录。[开发集索引](../configs/replay_dev.json) 保存文件名、图像和归一化标签的 SHA-256，以及匿名组号，不随仓库提供原始图像或标签。脚本从官方标注重建开发集标签，逐项匹配冻结哈希，只把 500 张白天及 331 张夜间开发图放入临时评估目录。最终留出、训练图片及候选池均不进入模型。
+
+输入核验只用 [数据环境](../environment/README.md)。确认目录正确后，可先运行如下命令。
+
+```powershell
+$raw = 'D:\SODA10M\SSLAD-2D\labeled'
+python -B scripts/replay_dev.py --soda-root $raw --scratch $env:TEMP --check-inputs
+```
+
+正式重跑使用 [项目锁定的 CUDA 环境](../environment/README.md)、符合显存检查的单张 NVIDIA GPU 和对应 checkpoint。启动时检查至少有 4 GiB 空闲显存，且 GPU 利用率不高于 35%。新入口复用原评估的 FP16、整景多尺度及镜像融合，保留五类的评价口径。[v0.1.0 Release](https://github.com/KeyH-code/Night_detection/releases/tag/v0.1.0) 提供三份权重及 `SHA256SUMS`，评估入口也会校验每个 checkpoint 的 SHA-256。白天源模型和 300 图夜间适配模型可用来对同一张图运行 `demo.py --weights` 作直观比较。340 图定向补样权重用于复核 README 的两个尾类缺口，省略时只复查 300 图主结果。用下载文件的路径替换下列变量。
+
+```powershell
+$evalPython = '.\.venv-train\Scripts\python.exe'
+$source = 'D:\weights\source-day.pt'
+$adapted = 'D:\weights\adapted-night-300.pt'
+$supplement = 'D:\weights\targeted-night-340.pt'
+New-Item -ItemType Directory -Force artifacts/evaluation | Out-Null
+& $evalPython -B scripts/replay_dev.py --soda-root $raw --scratch $env:TEMP `
+  --source-weights $source --adapted-weights $adapted --supplement-weights $supplement `
+  --output artifacts/evaluation/dev_001.json
+```
+
+JSON 保存每类 AP、召回、误报预算、区间与重跑差异。README 数字按显示精度比对，夜间 TP、FP 和真值数逐类精确比较。退出码 `0` 表示对应归档指标吻合，`2` 表示评估完成且保存了差异，`1` 表示输入或运行检查未通过。不同设备的数值差异由报告保留。历史白天模型曾额外融合三轮车视图，本入口复核的五类沿用保留其原有匹配边的路径，仅运行这五类所需视图。
+
 ## 复查
 
 公开结果以白天和夜间开发集为准。报告、配置、统计图和 Git 历史可以直接检查。下面的命令需要各自的本地封存材料，按 [环境说明](../environment/README.md) 安装依赖后从仓库根目录运行。图像、标签、训练权重及逐图预测由使用者合法准备。
